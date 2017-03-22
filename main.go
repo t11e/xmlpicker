@@ -10,36 +10,32 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 )
 
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		panic("usage: ingest level file...")
+		panic("usage: ingest selector file...")
 	}
-	startDepth, err := strconv.Atoi(args[0])
-	if err != nil {
-		panic(err)
-	}
+	selector := args[0]
 	args = args[1:]
 	if len(args) == 0 {
 		args = []string{"-"}
 	}
-	if err := run(startDepth, args); err != nil {
+	if err := run(selector, args); err != nil {
 		panic(err)
 	}
 }
 
-func run(startDepth int, args []string) error {
+func run(selector string, args []string) error {
 	for _, arg := range args {
 		if err := withReader(arg, func(r io.Reader) error {
 			return autoDecompress(r, func(r io.Reader) error {
 				w := os.Stdout
 				e := json.NewEncoder(w)
 				e.SetEscapeHTML(false)
-				return xmlparts(r, startDepth, func(v map[string]interface{}) error {
+				return xmlparts(r, selector, func(v map[string]interface{}) error {
 					if err := e.Encode(v); err != nil {
 						return err
 					}
@@ -54,57 +50,60 @@ func run(startDepth int, args []string) error {
 }
 
 type node struct {
-	name     xml.Name
-	attrs    []xml.Attr
+	elem     *xml.StartElement
+	text     string
+	parent   *node
 	children []*node
 }
 
 func (n node) export() map[string]interface{} {
 	out := make(map[string]interface{})
-	if n.name.Local == "#text" {
-		out["#text"] = []string{n.attrs[0].Value}
+	if n.elem == nil {
+		out["#text"] = []string{n.text}
 		return out
 	}
-	for _, a := range n.attrs {
+	for _, a := range n.elem.Attr {
 		out[fmt.Sprintf("@%s", a.Name.Local)] = a.Value
 	}
-	if len(n.children) == 1 && n.children[0].name.Local == "#text" {
-		out["#text"] = n.children[0].attrs[0].Value
-	}
 	for _, c := range n.children {
-		var t []interface{}
-		key := c.name.Local
-		if key == "#text" {
-			continue
-		}
-		if prev, ok := out[key]; ok {
-			t = prev.([]interface{})
+		var key string
+		var value interface{}
+		if c.elem == nil {
+			key = "#text"
+			value = c.text
 		} else {
-			t = make([]interface{}, 0)
-			out[key] = t
+			key = c.elem.Name.Local
+			value = c.export()
 		}
-		value := c.export()
-		out[key] = append(t, value)
+		var values []interface{}
+		if prev, ok := out[key]; ok {
+			values = prev.([]interface{})
+		} else {
+			values = make([]interface{}, 0)
+			out[key] = values
+		}
+		out[key] = append(values, value)
 	}
 	return out
 }
 
-type nodes []*node
+type path []xml.StartElement
 
-func (s nodes) String() string {
+func (p path) String() string {
 	var b bytes.Buffer
-	for _, f := range s {
+	for _, t := range p {
 		b.WriteRune('/')
-		b.WriteString(f.name.Local)
+		b.WriteString(t.Name.Local)
 	}
 	return b.String()
 }
 
-func xmlparts(r io.Reader, startDepth int, yield func(map[string]interface{}) error) error {
+func xmlparts(r io.Reader, selector string, yield func(map[string]interface{}) error) error {
 	d := xml.NewDecoder(r)
 	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
 	//d.CharsetReader = charset.NewReaderLabel
-	stack := make(nodes, 0)
+	path := make(path, 0)
+	var n *node
 	const maxTokens = -1
 	const maxDepth = 1000
 	const maxChildren = 1000
@@ -119,31 +118,35 @@ func xmlparts(r io.Reader, startDepth int, yield func(map[string]interface{}) er
 		switch t := t.(type) {
 		case xml.StartElement:
 			t = t.Copy()
-			cur := node{
-				name:  t.Name,
-				attrs: t.Attr,
-			}
-			stack = append(stack, &cur)
-			if len(stack) > maxDepth {
+			path = append(path, t)
+			if len(path) > maxDepth {
 				return errors.New("too many xml levels")
 			}
-			if len(stack) >= 2 && len(stack)-1 > startDepth {
-				prev := stack[len(stack)-2]
-				prev.children = append(prev.children, &cur)
-				if len(prev.children) > maxChildren {
-					return errors.New("too many child xml elements")
+			if n == nil {
+				if selector != path.String() {
+					continue
 				}
+				n = &node{elem: &t}
+				continue
 			}
+			c := &node{elem: &t}
+			c.parent = n
+			n.children = append(n.children, c)
+			if len(n.children) > maxChildren {
+				return errors.New("too many child xml elements")
+			}
+			n = c
 		case xml.EndElement:
-			prev := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			if len(stack) == startDepth {
-				t := node{children: []*node{prev}}
-				e := t.export()
-				yield(e)
+			path = path[:len(path)-1]
+			if n == nil {
+				continue
 			}
+			if n.parent == nil {
+				yield(n.export())
+			}
+			n = n.parent
 		case xml.CharData:
-			if len(stack) < 1 || len(stack)-1 < startDepth {
+			if n == nil {
 				continue
 			}
 			t = t.Copy()
@@ -152,20 +155,10 @@ func xmlparts(r io.Reader, startDepth int, yield func(map[string]interface{}) er
 			if len(s) == 0 {
 				continue
 			}
-			if false {
-				continue
-			}
-			cur := stack[len(stack)-1]
-			text := node{
-				name: xml.Name{Local: "#text"},
-				attrs: []xml.Attr{
-					{
-						Value: s,
-					},
-				},
-			}
-			cur.children = append(cur.children, &text)
-			if len(cur.children) > maxChildren {
+			c := &node{text: s}
+			c.parent = n
+			n.children = append(n.children, c)
+			if len(n.children) > maxChildren {
 				return errors.New("too many child xml elements")
 			}
 		case xml.Comment:
@@ -175,7 +168,7 @@ func xmlparts(r io.Reader, startDepth int, yield func(map[string]interface{}) er
 			return fmt.Errorf("unexpected xml token %+v", t)
 		}
 	}
-	if len(stack) != 0 {
+	if len(path) != 0 {
 		return errors.New("rest of file skipped")
 	}
 	return nil

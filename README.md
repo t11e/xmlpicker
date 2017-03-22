@@ -5,13 +5,11 @@
 To convert one or more XML files to a JSON stream:
 
 ```
-ingest level file...
+ingest selector file...
 ```
 
-Where level is the depth in the XML from which elements
-are converted to JSON objects. A level of 0 will treat
-the root element as a single JSON object. A level of 1
-will treat each child of the root element as a JSON object.
+Where selector is a simple XML path matcher that determines which
+nodes are converted to JSON objects.
 
 # Example
 
@@ -29,12 +27,34 @@ Input file:
 </listing>
 ```
 
-Convert just level 1 nodes:
+Convert just office nodes:
 ```sh
-ingest 1 example.xml
+ingest /listing/offices/office example.xml
 ```
 ```json
 {
+  "id": [
+    {
+      "#text": "123"
+    }
+  ]
+}
+{
+  "id": [
+    {
+      "#text": "124"
+    }
+  ]
+}
+```
+
+Convert the root node:
+```sh
+ingest /listing example.xml
+```
+```json
+{
+  "@id": "123",
   "offices": [
     {
       "@count": "2",
@@ -50,41 +70,6 @@ ingest 1 example.xml
           "id": [
             {
               "#text": "124"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-Convert the whole file:
-```sh
-ingest 0 example.xml
-```
-```json
-{
-  "listing": [
-    {
-      "@id": "123",
-      "offices": [
-        {
-          "@count": "2",
-          "office": [
-            {
-              "id": [
-                {
-                  "#text": "123"
-                }
-              ]
-            },
-            {
-              "id": [
-                {
-                  "#text": "124"
-                }
-              ]
             }
           ]
         }
