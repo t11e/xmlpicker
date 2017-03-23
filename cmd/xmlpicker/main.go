@@ -35,20 +35,16 @@ func main() {
 }
 
 func process(filename string, selector xmlpicker.Selector, mapper xmlpicker.Mapper, encoder *json.Encoder) error {
-	raw, shouldClose, err := open(filename)
+	raw, err := open(filename)
 	if err != nil {
 		return err
 	}
-	if shouldClose {
-		defer raw.Close()
-	}
-	reader, shouldClose, err := autoDecompress(raw)
+	defer raw.Close()
+	reader, err := autoDecompress(raw)
 	if err != nil {
 		return err
 	}
-	if shouldClose {
-		defer reader.Close()
-	}
+	defer reader.Close()
 	decoder := xml.NewDecoder(reader)
 	decoder.Strict = true
 	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
@@ -71,28 +67,23 @@ func process(filename string, selector xmlpicker.Selector, mapper xmlpicker.Mapp
 	return nil
 }
 
-// Opens the filename for reading, uses stdin if it is "-" and returns true if the caller should close the returned Reader.
-func open(filename string) (io.ReadCloser, bool, error) {
+// Opens the filename for reading, uses stdin if it is "-" the returned Reader should be closed.
+func open(filename string) (io.ReadCloser, error) {
 	if filename == "-" {
-		return os.Stdin, false, nil
+		return ioutil.NopCloser(os.Stdin), nil
 	}
-	f, err := os.Open(filename)
-	return f, true, err
+	return os.Open(filename)
 }
 
-// Wraps the reader to decompress if the gzip header is detected and returns true if the caller should close the returned Reader.
-func autoDecompress(source io.Reader) (io.ReadCloser, bool, error) {
+// Wraps the reader to decompress if the gzip header is detected, the returned Reader should be closed.
+func autoDecompress(source io.Reader) (io.ReadCloser, error) {
 	br := bufio.NewReader(source)
 	h, err := br.Peek(2)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if h[0] != 0x1f || h[1] != 0x8b {
-		return ioutil.NopCloser(br), false, nil
+		return ioutil.NopCloser(br), nil
 	}
-	gr, err := gzip.NewReader(br)
-	if err != nil {
-		return nil, false, err
-	}
-	return gr, true, err
+	return gzip.NewReader(br)
 }
