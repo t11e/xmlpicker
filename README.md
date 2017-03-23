@@ -81,11 +81,13 @@ ingest /listing example.xml
 
 # Contributions
 
-Clone this repository into your GOPATH.
+Clone this repository into your GOPATH and use [Glide](https://github.com/Masterminds/glide) to install its dependencies.
 
 ```sh
+brew install glide
 go get github.com/t11e/ingest
 cd "$GOPATH"/src/github.com/t11e/ingest
+glide install --strip-vendor
 ```
 
 You can then run the tests:
@@ -94,7 +96,7 @@ You can then run the tests:
 go test
 ```
 
-To install the commands into `$GOPATH/bin/`:
+To install the `injest` command into `$GOPATH/bin/`:
 
 ```sh
 go install
