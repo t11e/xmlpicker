@@ -3,6 +3,7 @@ package xmlpicker_test
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"strings"
 	"testing"
@@ -49,18 +50,23 @@ func TestSimpleSelector(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%d %s", idx, test.selector), func(t *testing.T) {
 			actual := make([]string, 0)
-			selector := test.selector
-			err := xmlpicker.Process(strings.NewReader(test.xml), xmlpicker.SimpleSelector(selector), func(path xmlpicker.Path, _ xmlpicker.Node) error {
+			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.SimpleSelector(test.selector))
+			for {
+				path, _, err := parser.Next()
+				if err == xmlpicker.EOF {
+					break
+				}
+				if !assert.NoError(t, err) {
+					return
+				}
 				actual = append(actual, path.String())
-				return nil
-			})
-			assert.NoError(t, err)
+			}
 			assert.Equal(t, test.expected, actual, "[%d] %s\nXML:\n%s\n", idx, test.selector, test.xml)
 		})
 	}
 }
 
-func TestDefaultXMLImporter(t *testing.T) {
+func TestSimpleMapper(t *testing.T) {
 	for idx, test := range []struct {
 		name        string
 		selector    string
@@ -127,15 +133,33 @@ func TestDefaultXMLImporter(t *testing.T) {
 			if selector == "" {
 				selector = "/"
 			}
-			xmlImporter := xmlpicker.DefaultXMLImporter{}
-			err := xmlpicker.Process(strings.NewReader(test.xml), xmlpicker.SimpleSelector(selector), func(_ xmlpicker.Path, n xmlpicker.Node) error {
-				v := xmlImporter.ImportXML(n)
-				return e.Encode(v)
-			})
+			mapper := xmlpicker.SimpleMapper{}
+			var actualErr error
+			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.SimpleSelector(test.selector))
+			for {
+				_, n, err := parser.Next()
+				if err == xmlpicker.EOF {
+					break
+				}
+				if err != nil {
+					actualErr = err
+					break
+				}
+				v, err := mapper.FromNode(n)
+				if err != nil {
+					actualErr = err
+					break
+				}
+				err = e.Encode(v)
+				if err != nil {
+					actualErr = err
+					break
+				}
+			}
 			if test.expectedErr != "" {
-				assert.EqualError(t, err, test.expectedErr, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
+				assert.EqualError(t, actualErr, test.expectedErr, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
 			} else {
-				assert.NoError(t, err, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
+				assert.NoError(t, actualErr, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
 			}
 			actual := strings.TrimSuffix(b.String(), "\n")
 			assert.Equal(t, test.expected, actual, "[%d] %s\nXML:\n%s\nExpected:\n%s\nActual:\n%s\n", idx, test.name, test.xml, test.expected, actual)

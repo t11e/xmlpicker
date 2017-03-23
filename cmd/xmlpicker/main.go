@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"compress/gzip"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 
 	"github.com/t11e/xmlpicker"
@@ -14,114 +16,83 @@ import (
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		panic("usage: xmlpicker selector file...")
+		fmt.Fprintln(os.Stderr, "usage: xmlpicker selector file...")
+		os.Exit(1)
 	}
 	selector := xmlpicker.SimpleSelector(args[0])
-	xmlImporter := xmlpicker.DefaultXMLImporter{}
+	mapper := xmlpicker.SimpleMapper{}
 	args = args[1:]
 	if len(args) == 0 {
 		args = []string{"-"}
 	}
-	if err := run(selector, xmlImporter, args); err != nil {
-		panic(err)
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	for _, filename := range args {
+		if err := process(filename, selector, mapper, encoder); err != nil {
+			panic(err)
+		}
 	}
 }
 
-func run(selector xmlpicker.Selector, xmlImporter xmlpicker.XMLImporter, args []string) error {
-	for _, arg := range args {
-		if err := withReader(arg, func(r io.Reader) error {
-			return autoDecompress(r, func(r io.Reader) error {
-				w := os.Stdout
-				e := json.NewEncoder(w)
-				e.SetEscapeHTML(false)
-				return xmlpicker.Process(r, selector, func(_ xmlpicker.Path, n xmlpicker.Node) error {
-					v := xmlImporter.ImportXML(n)
-					if err := e.Encode(v); err != nil {
-						return err
-					}
-					return nil
-				})
-			})
-		}); err != nil {
+func process(filename string, selector xmlpicker.Selector, mapper xmlpicker.Mapper, encoder *json.Encoder) error {
+	raw, shouldClose, err := open(filename)
+	if err != nil {
+		return err
+	}
+	if shouldClose {
+		defer raw.Close()
+	}
+	reader, shouldClose, err := autoDecompress(raw)
+	if err != nil {
+		return err
+	}
+	if shouldClose {
+		defer reader.Close()
+	}
+	decoder := xml.NewDecoder(reader)
+	decoder.Strict = true
+	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
+	//decoder.CharsetReader = charset.NewReaderLabel
+	parser := xmlpicker.NewParser(decoder, selector)
+	for {
+		_, n, err := parser.Next()
+		if err == xmlpicker.EOF {
+			break
+		}
+		if err != nil {
 			return err
 		}
+		v, err := mapper.FromNode(n)
+		if err != nil {
+			return err
+		}
+		encoder.Encode(v)
 	}
 	return nil
 }
 
-// Opens the file name (or stdin if -) for reading
-func withReader(name string, next func(io.Reader) error) error {
-	var r io.Reader
-	if name == "-" {
-		r = os.Stdin
-	} else {
-		f, err := os.Open(name)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			err := f.Close()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "problem closing %s: %s\n", name, err)
-			}
-		}()
-		r = f
+// Opens the filename for reading, uses stdin if it is "-" and returns true if the caller should close the returned Reader.
+func open(filename string) (io.ReadCloser, bool, error) {
+	if filename == "-" {
+		return os.Stdin, false, nil
 	}
-	return next(r)
+	f, err := os.Open(filename)
+	return f, true, err
 }
 
-// Wraps the reader to decompress if the gzip header is detected
-func autoDecompress(source io.Reader, next func(io.Reader) error) error {
+// Wraps the reader to decompress if the gzip header is detected and returns true if the caller should close the returned Reader.
+func autoDecompress(source io.Reader) (io.ReadCloser, bool, error) {
 	br := bufio.NewReader(source)
 	h, err := br.Peek(2)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if h[0] != 0x1f || h[1] != 0x8b {
-		return next(br)
+		return ioutil.NopCloser(br), false, nil
 	}
 	gr, err := gzip.NewReader(br)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
-	defer func() {
-		err := gr.Close()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "problem closing gzip br: %s\n", err)
-		}
-	}()
-	return next(gr)
-}
-
-// Opens the file name (or stdout if -) for writing
-func withWriter(name string, next func(io.Writer) error) error {
-	var w io.Writer
-	if name == "-" {
-		w = os.Stdout
-	} else {
-		f, err := os.Create(name)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			err := f.Close()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "problem closing %s: %s\n", name, err)
-			}
-		}()
-		w = f
-	}
-	return next(w)
-}
-
-// Wraps the reader to decompress if the gzip header is detected
-func compress(source io.Writer, next func(io.Writer) error) error {
-	w := gzip.NewWriter(source)
-	defer func() {
-		err := w.Close()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "problem closing gzip reader: %s\n", err)
-		}
-	}()
-	return next(w)
+	return gr, true, err
 }

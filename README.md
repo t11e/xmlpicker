@@ -1,5 +1,8 @@
 # xmlpicker
 
+Wraps an `xml.Decoder` to support picking out smaller chunks from very large XML files
+where each indidual chunk can be held in memory for processing.
+
 # Usage
 
 To convert one or more XML files to a JSON stream:

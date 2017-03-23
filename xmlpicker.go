@@ -11,47 +11,9 @@ import (
 
 type Node struct {
 	Element  *xml.StartElement
-	text     string
+	Text     string
 	Parent   *Node
-	children []*Node
-}
-
-type XMLImporter interface {
-	ImportXML(node Node) map[string]interface{}
-}
-
-type DefaultXMLImporter struct {
-}
-
-func (xi DefaultXMLImporter) ImportXML(n Node) map[string]interface{} {
-	out := make(map[string]interface{})
-	if n.Element == nil {
-		out["#text"] = []string{n.text}
-		return out
-	}
-	for _, a := range n.Element.Attr {
-		out[fmt.Sprintf("@%s", a.Name.Local)] = a.Value
-	}
-	for _, c := range n.children {
-		var key string
-		var value interface{}
-		if c.Element == nil {
-			key = "#text"
-			value = c.text
-		} else {
-			key = c.Element.Name.Local
-			value = xi.ImportXML(*c)
-		}
-		var values []interface{}
-		if prev, ok := out[key]; ok {
-			values = prev.([]interface{})
-		} else {
-			values = make([]interface{}, 0)
-			out[key] = values
-		}
-		out[key] = append(values, value)
-	}
-	return out
+	Children []*Node
 }
 
 type Path []xml.StartElement
@@ -102,55 +64,91 @@ func (s simpleSelector) Matches(path Path) bool {
 	return true
 }
 
-func Process(r io.Reader, selector Selector, yield func(Path, Node) error) error {
-	d := xml.NewDecoder(r)
-	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
-	//d.CharsetReader = charset.NewReaderLabel
-	path := make(Path, 0)
-	var n *Node
-	const maxTokens = -1
-	const maxDepth = 1000
-	const maxChildren = 1000
-	for c := 0; maxTokens < 0 || c < maxTokens; c = c + 1 {
-		t, err := d.Token()
+func NewParser(decoder *xml.Decoder, selector Selector) *Parser {
+	return &Parser{
+		MaxDepth:    1000,
+		MaxChildren: 1000,
+		MaxTokens:   -1,
+		decoder:     decoder,
+		selector:    selector,
+		path:        make(Path, 0),
+	}
+}
+
+type Parser struct {
+	MaxDepth    int
+	MaxChildren int
+	MaxTokens   int
+
+	decoder    *xml.Decoder
+	selector   Selector
+	path       Path
+	tokenCount int
+	node       *Node
+}
+
+var EOF = errors.New("EOF")
+
+func (p *Parser) Next() (Path, *Node, error) {
+	if p.path == nil {
+		return nil, nil, errors.New("xmlpicker: will no longer consume tokens, Next() called after error")
+	}
+	for {
+		t, err := p.decoder.Token()
 		if err != nil {
-			if err == io.EOF {
-				break
+			if err == io.EOF && len(p.path) == 0 && p.node == nil {
+				return nil, nil, EOF
 			}
-			return err
+			return nil, nil, err
+		}
+		p.tokenCount = p.tokenCount + 1
+		if p.MaxTokens != -1 && p.tokenCount > p.MaxTokens {
+			p.path = nil
+			return nil, nil, fmt.Errorf("xmlpicker: token limit reached %d", p.MaxTokens)
 		}
 		switch t := t.(type) {
 		case xml.StartElement:
 			t = t.Copy()
-			path = append(path, t)
-			if len(path) > maxDepth {
-				return errors.New("too many xml levels")
+			p.path = append(p.path, t)
+			if len(p.path) > p.MaxDepth {
+				p.path = nil
+				return nil, nil, fmt.Errorf("xmlpicker: depth limit reached %d", p.MaxDepth)
 			}
-			if n == nil {
-				if !selector.Matches(path) {
-					continue
+			if p.node == nil {
+				if p.selector.Matches(p.path) {
+					p.node = &Node{Element: &t}
 				}
-				n = &Node{Element: &t}
 				continue
 			}
 			c := &Node{Element: &t}
-			c.Parent = n
-			n.children = append(n.children, c)
-			if len(n.children) > maxChildren {
-				return errors.New("too many child xml elements")
+			c.Parent = p.node
+			p.node.Children = append(p.node.Children, c)
+			if len(p.node.Children) > p.MaxChildren {
+				return nil, nil, fmt.Errorf("xmlpicker: maximum node child limit reached %d", p.MaxChildren)
 			}
-			n = c
+			p.node = c
 		case xml.EndElement:
-			if n != nil && n.Parent == nil {
-				yield(path, *n)
+			if len(p.path) == 0 {
+				p.path = nil
+				p.node = nil
+				return nil, nil, errors.New("xmlpicker: negative depth detected!")
 			}
-			path = path[:len(path)-1]
-			if n == nil {
-				continue
+			var resultPath Path
+			var resultNode *Node
+			if p.node != nil && p.node.Parent == nil {
+				resultPath = p.path
+				resultNode = p.node
 			}
-			n = n.Parent
+			p.path = p.path[:len(p.path)-1]
+			if p.node != nil {
+				p.node = p.node.Parent
+			}
+			if resultPath != nil || resultNode != nil {
+				return resultPath, resultNode, nil
+			}
+
 		case xml.CharData:
-			if n == nil {
+			if p.node == nil {
 				continue
 			}
 			t = t.Copy()
@@ -159,21 +157,59 @@ func Process(r io.Reader, selector Selector, yield func(Path, Node) error) error
 			if len(s) == 0 {
 				continue
 			}
-			c := &Node{text: s}
-			c.Parent = n
-			n.children = append(n.children, c)
-			if len(n.children) > maxChildren {
-				return errors.New("too many child xml elements")
+			c := &Node{Text: s}
+			c.Parent = p.node
+			p.node.Children = append(p.node.Children, c)
+			if len(p.node.Children) > p.MaxChildren {
+				return nil, nil, fmt.Errorf("xmlpicker: maximum node child limit reached %d", p.MaxChildren)
 			}
 		case xml.Comment:
 		case xml.ProcInst:
 		case xml.Directive:
 		default:
-			return fmt.Errorf("unexpected xml token %+v", t)
+			return nil, nil, fmt.Errorf("xmlpicker: unexpected xml token %+v", t)
 		}
 	}
-	if len(path) != 0 {
-		return errors.New("rest of file skipped")
+}
+
+type Mapper interface {
+	FromNode(node *Node) (map[string]interface{}, error)
+}
+
+type SimpleMapper struct {
+}
+
+func (xi SimpleMapper) FromNode(n *Node) (map[string]interface{}, error) {
+	out := make(map[string]interface{})
+	if n.Element == nil {
+		out["#text"] = []string{n.Text}
+		return out, nil
 	}
-	return nil
+	for _, a := range n.Element.Attr {
+		out[fmt.Sprintf("@%s", a.Name.Local)] = a.Value
+	}
+	for _, c := range n.Children {
+		var key string
+		var value interface{}
+		if c.Element == nil {
+			key = "#text"
+			value = c.Text
+		} else {
+			key = c.Element.Name.Local
+			var err error
+			value, err = xi.FromNode(c)
+			if err != nil {
+				return nil, err
+			}
+		}
+		var values []interface{}
+		if prev, ok := out[key]; ok {
+			values = prev.([]interface{})
+		} else {
+			values = make([]interface{}, 0)
+			out[key] = values
+		}
+		out[key] = append(values, value)
+	}
+	return out, nil
 }
