@@ -1,11 +1,11 @@
-# ingest
+# xmlpicker
 
 # Usage
 
 To convert one or more XML files to a JSON stream:
 
 ```
-ingest selector file...
+xmlpicker selector file...
 ```
 
 Where selector is a simple XML path matcher that determines which
@@ -29,7 +29,7 @@ Input file:
 
 Convert just office nodes:
 ```sh
-ingest /listing/offices/office example.xml
+xmlpicker /listing/offices/office example.xml
 ```
 ```json
 {
@@ -50,7 +50,7 @@ ingest /listing/offices/office example.xml
 
 Convert the root node:
 ```sh
-ingest / example.xml
+xmlpicker / example.xml
 ```
 ```json
 {
@@ -85,19 +85,19 @@ Clone this repository into your GOPATH and use [Glide](https://github.com/Master
 
 ```sh
 brew install glide
-go get github.com/t11e/ingest
-cd "$GOPATH"/src/github.com/t11e/ingest
+go get github.com/t11e/xmlpicker
+cd "$GOPATH"/src/github.com/t11e/xmlpicker
 glide install --strip-vendor
 ```
 
 You can then run the tests:
 
 ```sh
-go test
+go test $(go list ./... | grep -v /vendor/)
 ```
 
-To install the `injest` command into `$GOPATH/bin/`:
+To install the commands into `$GOPATH/bin/`:
 
 ```sh
-go install
+go install ./cmd/...
 ```

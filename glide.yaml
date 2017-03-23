@@ -1,4 +1,4 @@
-package: github.com/t11e/ingest
+package: github.com/t11e/xmlpicker
 import: []
 testImport:
 - package: github.com/stretchr/testify

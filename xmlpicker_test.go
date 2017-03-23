@@ -1,4 +1,4 @@
-package main
+package xmlpicker_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/t11e/xmlpicker"
 )
 
 func TestSimpleSelector(t *testing.T) {
@@ -49,7 +50,7 @@ func TestSimpleSelector(t *testing.T) {
 		t.Run(fmt.Sprintf("%d %s", idx, test.selector), func(t *testing.T) {
 			actual := make([]string, 0)
 			selector := test.selector
-			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(path Path, _ Node) error {
+			err := xmlpicker.Process(strings.NewReader(test.xml), xmlpicker.SimpleSelector(selector), func(path xmlpicker.Path, _ xmlpicker.Node) error {
 				actual = append(actual, path.String())
 				return nil
 			})
@@ -126,8 +127,8 @@ func TestDefaultXMLImporter(t *testing.T) {
 			if selector == "" {
 				selector = "/"
 			}
-			xmlImporter := DefaultXMLImporter{}
-			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(_ Path, n Node) error {
+			xmlImporter := xmlpicker.DefaultXMLImporter{}
+			err := xmlpicker.Process(strings.NewReader(test.xml), xmlpicker.SimpleSelector(selector), func(_ xmlpicker.Path, n xmlpicker.Node) error {
 				v := xmlImporter.ImportXML(n)
 				return e.Encode(v)
 			})
