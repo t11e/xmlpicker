@@ -19,23 +19,25 @@ func main() {
 		panic("usage: ingest selector file...")
 	}
 	selector := SimpleSelector(args[0])
+	xmlImporter := DefaultXMLImporter{}
 	args = args[1:]
 	if len(args) == 0 {
 		args = []string{"-"}
 	}
-	if err := run(selector, args); err != nil {
+	if err := run(selector, xmlImporter, args); err != nil {
 		panic(err)
 	}
 }
 
-func run(selector Selector, args []string) error {
+func run(selector Selector, xmlImporter XMLImporter, args []string) error {
 	for _, arg := range args {
 		if err := withReader(arg, func(r io.Reader) error {
 			return autoDecompress(r, func(r io.Reader) error {
 				w := os.Stdout
 				e := json.NewEncoder(w)
 				e.SetEscapeHTML(false)
-				return xmlparts(r, selector, func(_ Path, v map[string]interface{}) error {
+				return xmlparts(r, selector, func(_ Path, n Node) error {
+					v := xmlImporter.ImportXML(n)
 					if err := e.Encode(v); err != nil {
 						return err
 					}
@@ -49,31 +51,38 @@ func run(selector Selector, args []string) error {
 	return nil
 }
 
-type node struct {
-	elem     *xml.StartElement
+type Node struct {
+	Element  *xml.StartElement
 	text     string
-	parent   *node
-	children []*node
+	Parent   *Node
+	children []*Node
 }
 
-func (n node) export() map[string]interface{} {
+type XMLImporter interface {
+	ImportXML(node Node) map[string]interface{}
+}
+
+type DefaultXMLImporter struct {
+}
+
+func (xi DefaultXMLImporter) ImportXML(n Node) map[string]interface{} {
 	out := make(map[string]interface{})
-	if n.elem == nil {
+	if n.Element == nil {
 		out["#text"] = []string{n.text}
 		return out
 	}
-	for _, a := range n.elem.Attr {
+	for _, a := range n.Element.Attr {
 		out[fmt.Sprintf("@%s", a.Name.Local)] = a.Value
 	}
 	for _, c := range n.children {
 		var key string
 		var value interface{}
-		if c.elem == nil {
+		if c.Element == nil {
 			key = "#text"
 			value = c.text
 		} else {
-			key = c.elem.Name.Local
-			value = c.export()
+			key = c.Element.Name.Local
+			value = xi.ImportXML(*c)
 		}
 		var values []interface{}
 		if prev, ok := out[key]; ok {
@@ -135,12 +144,12 @@ func (s simpleSelector) Matches(path Path) bool {
 	return true
 }
 
-func xmlparts(r io.Reader, selector Selector, yield func(Path, map[string]interface{}) error) error {
+func xmlparts(r io.Reader, selector Selector, yield func(Path, Node) error) error {
 	d := xml.NewDecoder(r)
 	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
 	//d.CharsetReader = charset.NewReaderLabel
 	path := make(Path, 0)
-	var n *node
+	var n *Node
 	const maxTokens = -1
 	const maxDepth = 1000
 	const maxChildren = 1000
@@ -163,25 +172,25 @@ func xmlparts(r io.Reader, selector Selector, yield func(Path, map[string]interf
 				if !selector.Matches(path) {
 					continue
 				}
-				n = &node{elem: &t}
+				n = &Node{Element: &t}
 				continue
 			}
-			c := &node{elem: &t}
-			c.parent = n
+			c := &Node{Element: &t}
+			c.Parent = n
 			n.children = append(n.children, c)
 			if len(n.children) > maxChildren {
 				return errors.New("too many child xml elements")
 			}
 			n = c
 		case xml.EndElement:
-			if n != nil && n.parent == nil {
-				yield(path, n.export())
+			if n != nil && n.Parent == nil {
+				yield(path, *n)
 			}
 			path = path[:len(path)-1]
 			if n == nil {
 				continue
 			}
-			n = n.parent
+			n = n.Parent
 		case xml.CharData:
 			if n == nil {
 				continue
@@ -192,8 +201,8 @@ func xmlparts(r io.Reader, selector Selector, yield func(Path, map[string]interf
 			if len(s) == 0 {
 				continue
 			}
-			c := &node{text: s}
-			c.parent = n
+			c := &Node{text: s}
+			c.Parent = n
 			n.children = append(n.children, c)
 			if len(n.children) > maxChildren {
 				return errors.New("too many child xml elements")

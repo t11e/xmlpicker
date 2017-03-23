@@ -49,7 +49,7 @@ func TestSimpleSelector(t *testing.T) {
 		t.Run(fmt.Sprintf("%d %s", idx, test.selector), func(t *testing.T) {
 			actual := make([]string, 0)
 			selector := test.selector
-			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(path Path, _ map[string]interface{}) error {
+			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(path Path, _ Node) error {
 				actual = append(actual, path.String())
 				return nil
 			})
@@ -59,7 +59,7 @@ func TestSimpleSelector(t *testing.T) {
 	}
 }
 
-func TestXmlToJson(t *testing.T) {
+func TestDefaultXMLImporter(t *testing.T) {
 	for idx, test := range []struct {
 		name        string
 		selector    string
@@ -126,8 +126,10 @@ func TestXmlToJson(t *testing.T) {
 			if selector == "" {
 				selector = "/"
 			}
-			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(_ Path, row map[string]interface{}) error {
-				return e.Encode(row)
+			xmlImporter := DefaultXMLImporter{}
+			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(_ Path, n Node) error {
+				v := xmlImporter.ImportXML(n)
+				return e.Encode(v)
 			})
 			if test.expectedErr != "" {
 				assert.EqualError(t, err, test.expectedErr, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
