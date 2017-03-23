@@ -18,7 +18,7 @@ func main() {
 	if len(args) == 0 {
 		panic("usage: ingest selector file...")
 	}
-	selector := args[0]
+	selector := SimpleSelector(args[0])
 	args = args[1:]
 	if len(args) == 0 {
 		args = []string{"-"}
@@ -28,14 +28,14 @@ func main() {
 	}
 }
 
-func run(selector string, args []string) error {
+func run(selector Selector, args []string) error {
 	for _, arg := range args {
 		if err := withReader(arg, func(r io.Reader) error {
 			return autoDecompress(r, func(r io.Reader) error {
 				w := os.Stdout
 				e := json.NewEncoder(w)
 				e.SetEscapeHTML(false)
-				return xmlparts(r, selector, func(v map[string]interface{}) error {
+				return xmlparts(r, selector, func(_ Path, v map[string]interface{}) error {
 					if err := e.Encode(v); err != nil {
 						return err
 					}
@@ -87,22 +87,59 @@ func (n node) export() map[string]interface{} {
 	return out
 }
 
-type path []xml.StartElement
+type Path []xml.StartElement
 
-func (p path) String() string {
+func (p Path) String() string {
 	var b bytes.Buffer
-	for _, t := range p {
-		b.WriteRune('/')
+	b.WriteRune('/')
+	for i, t := range p {
+		if i > 0 {
+			b.WriteRune('/')
+		}
 		b.WriteString(t.Name.Local)
 	}
 	return b.String()
 }
 
-func xmlparts(r io.Reader, selector string, yield func(map[string]interface{}) error) error {
+type Selector interface {
+	Matches(path Path) bool
+}
+
+func SimpleSelector(selector string) Selector {
+	parts := strings.Split(selector, "/")
+	if len(parts) > 1 && parts[0] == "" {
+		parts = parts[1:]
+	}
+	matchLen := len(parts)
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	return simpleSelector{parts, matchLen}
+}
+
+type simpleSelector struct {
+	Parts    []string
+	MatchLen int
+}
+
+func (s simpleSelector) Matches(path Path) bool {
+	if len(path) != s.MatchLen {
+		return false
+	}
+	for i, part := range s.Parts {
+		p := path[i]
+		if part != p.Name.Local {
+			return false
+		}
+	}
+	return true
+}
+
+func xmlparts(r io.Reader, selector Selector, yield func(Path, map[string]interface{}) error) error {
 	d := xml.NewDecoder(r)
 	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
 	//d.CharsetReader = charset.NewReaderLabel
-	path := make(path, 0)
+	path := make(Path, 0)
 	var n *node
 	const maxTokens = -1
 	const maxDepth = 1000
@@ -123,7 +160,7 @@ func xmlparts(r io.Reader, selector string, yield func(map[string]interface{}) e
 				return errors.New("too many xml levels")
 			}
 			if n == nil {
-				if selector != path.String() {
+				if !selector.Matches(path) {
 					continue
 				}
 				n = &node{elem: &t}
@@ -137,12 +174,12 @@ func xmlparts(r io.Reader, selector string, yield func(map[string]interface{}) e
 			}
 			n = c
 		case xml.EndElement:
+			if n != nil && n.parent == nil {
+				yield(path, n.export())
+			}
 			path = path[:len(path)-1]
 			if n == nil {
 				continue
-			}
-			if n.parent == nil {
-				yield(n.export())
 			}
 			n = n.parent
 		case xml.CharData:

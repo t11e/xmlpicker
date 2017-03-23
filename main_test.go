@@ -10,9 +10,59 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestSimpleSelector(t *testing.T) {
+	for idx, test := range []struct {
+		selector string
+		xml      string
+		expected []string
+	}{
+		{
+			xml:      `<a><b/><c/></a>`,
+			expected: []string{"/a"},
+		},
+		{
+			selector: "/",
+			xml:      `<a><b/><c/></a>`,
+			expected: []string{"/a"},
+		},
+		{
+			selector: "/a",
+			xml:      `<a><b/><c/></a>`,
+			expected: []string{"/a"},
+		},
+		{
+			selector: "/a/",
+			xml:      `<a><b/><c/><b/></a>`,
+			expected: []string{"/a/b", "/a/c", "/a/b"},
+		},
+		{
+			selector: "/a/b",
+			xml:      `<a><b/><c/><b/></a>`,
+			expected: []string{"/a/b", "/a/b"},
+		},
+		{
+			selector: "/a/b/c",
+			xml:      `<a><b><c/></b><c/><b><c/></b><b><d/></b></a>`,
+			expected: []string{"/a/b/c", "/a/b/c"},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d %s", idx, test.selector), func(t *testing.T) {
+			actual := make([]string, 0)
+			selector := test.selector
+			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(path Path, _ map[string]interface{}) error {
+				actual = append(actual, path.String())
+				return nil
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, test.expected, actual, "[%d] %s\nXML:\n%s\n", idx, test.selector, test.xml)
+		})
+	}
+}
+
 func TestXmlToJson(t *testing.T) {
 	for idx, test := range []struct {
 		name        string
+		selector    string
 		xml         string
 		expected    string
 		expectedErr string
@@ -68,19 +118,23 @@ func TestXmlToJson(t *testing.T) {
 			expected: `{"#text":["hello","and"],"b":[{"#text":["fred"]},{"#text":["wilma"]}]}`,
 		},
 	} {
-		t.Run(fmt.Sprintf("%d %s", idx, test.name), func(tt *testing.T) {
+		t.Run(fmt.Sprintf("%d %s", idx, test.name), func(t *testing.T) {
 			var b bytes.Buffer
 			e := json.NewEncoder(&b)
 			e.SetEscapeHTML(false)
-			err := xmlparts(strings.NewReader(test.xml), "/a", func(row map[string]interface{}) error {
+			selector := test.selector
+			if selector == "" {
+				selector = "/"
+			}
+			err := xmlparts(strings.NewReader(test.xml), SimpleSelector(selector), func(_ Path, row map[string]interface{}) error {
 				return e.Encode(row)
 			})
-			actual := strings.TrimSuffix(b.String(), "\n")
 			if test.expectedErr != "" {
 				assert.EqualError(t, err, test.expectedErr, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
 			} else {
 				assert.NoError(t, err, "[%d] %s\nXML:\n%s\n", idx, test.name, test.xml)
 			}
+			actual := strings.TrimSuffix(b.String(), "\n")
 			assert.Equal(t, test.expected, actual, "[%d] %s\nXML:\n%s\nExpected:\n%s\nActual:\n%s\n", idx, test.name, test.xml, test.expected, actual)
 		})
 	}

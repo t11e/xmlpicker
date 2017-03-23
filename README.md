@@ -50,7 +50,7 @@ ingest /listing/offices/office example.xml
 
 Convert the root node:
 ```sh
-ingest /listing example.xml
+ingest / example.xml
 ```
 ```json
 {
