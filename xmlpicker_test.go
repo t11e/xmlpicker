@@ -26,7 +26,17 @@ func TestSimpleSelector(t *testing.T) {
 			expected: []string{"/a"},
 		},
 		{
+			selector: "*",
+			xml:      `<a><b/><c/></a>`,
+			expected: []string{"/a"},
+		},
+		{
 			selector: "/",
+			xml:      `<a><b/><c/></a>`,
+			expected: []string{"/a"},
+		},
+		{
+			selector: "/*",
 			xml:      `<a><b/><c/></a>`,
 			expected: []string{"/a"},
 		},
@@ -41,12 +51,42 @@ func TestSimpleSelector(t *testing.T) {
 			expected: []string{"/a/b", "/a/c", "/a/b"},
 		},
 		{
+			selector: "/a/*",
+			xml:      `<a><b/><c/><b/></a>`,
+			expected: []string{"/a/b", "/a/c", "/a/b"},
+		},
+		{
+			selector: "/*/",
+			xml:      `<a><b/><c/><b/></a>`,
+			expected: []string{"/a/b", "/a/c", "/a/b"},
+		},
+		{
 			selector: "/a/b",
 			xml:      `<a><b/><c/><b/></a>`,
 			expected: []string{"/a/b", "/a/b"},
 		},
 		{
+			selector: "/*/b",
+			xml:      `<a><b/><c/><b/></a>`,
+			expected: []string{"/a/b", "/a/b"},
+		},
+		{
 			selector: "/a/b/c",
+			xml:      `<a><b><c/></b><c/><b><c/></b><b><d/></b></a>`,
+			expected: []string{"/a/b/c", "/a/b/c"},
+		},
+		{
+			selector: "/a/*/c",
+			xml:      `<a><b><c/></b><c/><b><c/></b><b><d/></b></a>`,
+			expected: []string{"/a/b/c", "/a/b/c"},
+		},
+		{
+			selector: "/*/b/c",
+			xml:      `<a><b><c/></b><c/><b><c/></b><b><d/></b></a>`,
+			expected: []string{"/a/b/c", "/a/b/c"},
+		},
+		{
+			selector: "/*/*/c",
 			xml:      `<a><b><c/></b><c/><b><c/></b><b><d/></b></a>`,
 			expected: []string{"/a/b/c", "/a/b/c"},
 		},

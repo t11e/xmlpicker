@@ -72,7 +72,7 @@ func (s simpleSelector) Matches(path Path) bool {
 	}
 	for i, part := range s.parts {
 		p := path[i]
-		if part != p.Name.Local {
+		if part != p.Name.Local && part != "*" {
 			return false
 		}
 	}
