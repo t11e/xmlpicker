@@ -52,7 +52,7 @@ func process(filename string, selector xmlpicker.Selector, mapper xmlpicker.Mapp
 	parser := xmlpicker.NewParser(decoder, selector)
 	for {
 		_, n, err := parser.Next()
-		if err == xmlpicker.EOF {
+		if err == io.EOF {
 			break
 		}
 		if err != nil {

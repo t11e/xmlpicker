@@ -16,14 +16,29 @@ type Node struct {
 	Children []*Node
 }
 
-type Path []xml.StartElement
+type Path []*PathElement
 
-func (p Path) String() string {
+type Namespaces map[string]string
+
+type PathElement struct {
+	Name       xml.Name
+	Namespaces Namespaces
+}
+
+func (p *Path) String() string {
 	var b bytes.Buffer
 	b.WriteRune('/')
-	for i, t := range p {
+	for i, t := range *p {
 		if i > 0 {
 			b.WriteRune('/')
+		}
+		if t.Name.Space != "" {
+			s, ok := t.Namespaces[t.Name.Space]
+			if !ok {
+				s = "!" + t.Name.Space
+			}
+			b.WriteString(s)
+			b.WriteRune(':')
 		}
 		b.WriteString(t.Name.Local)
 	}
@@ -47,15 +62,15 @@ func SimpleSelector(selector string) Selector {
 }
 
 type simpleSelector struct {
-	Parts    []string
-	MatchLen int
+	parts    []string
+	matchLen int
 }
 
 func (s simpleSelector) Matches(path Path) bool {
-	if len(path) != s.MatchLen {
+	if len(path) != s.matchLen {
 		return false
 	}
-	for i, part := range s.Parts {
+	for i, part := range s.parts {
 		p := path[i]
 		if part != p.Name.Local {
 			return false
@@ -75,7 +90,29 @@ func NewParser(decoder *xml.Decoder, selector Selector) *Parser {
 	}
 }
 
+type NSFlag int
+
+const (
+	NSExpand NSFlag = iota
+	NSPrefix
+	NSStrip
+)
+
+func (f NSFlag) String() string {
+	switch f {
+	case NSExpand:
+		return "NSExpand"
+	case NSPrefix:
+		return "NSPrefix"
+	case NSStrip:
+		return "NSStrip"
+	default:
+		return fmt.Sprintf("!NSFLAG(%d)", f)
+	}
+}
+
 type Parser struct {
+	NSFlag      NSFlag
 	MaxDepth    int
 	MaxChildren int
 	MaxTokens   int
@@ -87,17 +124,86 @@ type Parser struct {
 	node       *Node
 }
 
-var EOF = errors.New("EOF")
+var UnexpectedEOF = errors.New("xmlpicker: unexpected EOF")
+
+// push adds start to the path.
+// Namespace handling is similar to xml.Token().
+func (path *Path) push(start *xml.StartElement, mapNamespaces bool) {
+	if !mapNamespaces {
+		*path = append(*path, &PathElement{
+			Name: start.Name,
+		})
+		return
+
+	}
+	var ns Namespaces
+	if len(*path) != 0 {
+		ns = (*path)[len(*path)-1].Namespaces
+	}
+	modifies := false
+	for _, a := range start.Attr {
+		if a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns") {
+			modifies = true
+			break
+		}
+	}
+	if modifies {
+		c := make(Namespaces, len(ns))
+		for k, v := range ns {
+			c[k] = v
+		}
+		ns = c
+		for _, a := range start.Attr {
+			if a.Name.Space == "xmlns" {
+				ns[a.Name.Local] = a.Value
+			}
+			if a.Name.Space == "" && a.Name.Local == "xmlns" { // default space for untagged names
+				ns[""] = a.Value
+			}
+		}
+
+	}
+	*path = append(*path, &PathElement{
+		Name:       start.Name,
+		Namespaces: ns,
+	})
+}
+
+// pop removes the end element from the path and returns an error if it does not match the appropriate start element.
+// Normally xml.Decoder.Token() would do this for us but we are using xml.Decoder.RawToken() instead to allow for
+// access of the XML namespace prefixes.
+// Syntax errors handling is similar to xml.popElement().
+func (path *Path) pop(end *xml.EndElement, checkSpace bool) (*PathElement, error) {
+	i := len(*path) - 1
+	if i < 0 {
+		return nil, fmt.Errorf("xmlpicker: unexpected end element </%s>", end.Name.Local)
+	}
+	start := (*path)[i]
+	if start.Name.Local != end.Name.Local {
+		return nil, fmt.Errorf("xmlpicker: element <%s> closed by </%s>", start.Name.Local, end.Name.Local)
+	}
+	if checkSpace && start.Name.Space != end.Name.Space {
+		return nil, fmt.Errorf("xmlpicker: element <%s> in space %s closed by </%s> in space %s", start.Name.Local, start.Name.Space, end.Name.Local, end.Name.Space)
+	}
+	*path = (*path)[:i]
+	return start, nil
+}
 
 func (p *Parser) Next() (Path, *Node, error) {
 	if p.path == nil {
 		return nil, nil, errors.New("xmlpicker: will no longer consume tokens, Next() called after error")
 	}
 	for {
-		t, err := p.decoder.Token()
+		var t xml.Token
+		var err error
+		if p.NSFlag == NSPrefix {
+			t, err = p.decoder.RawToken()
+		} else {
+			t, err = p.decoder.Token()
+		}
 		if err != nil {
-			if err == io.EOF && len(p.path) == 0 && p.node == nil {
-				return nil, nil, EOF
+			if err == io.EOF && (len(p.path) != 0 || p.node != nil) {
+				return nil, nil, UnexpectedEOF
 			}
 			return nil, nil, err
 		}
@@ -109,7 +215,13 @@ func (p *Parser) Next() (Path, *Node, error) {
 		switch t := t.(type) {
 		case xml.StartElement:
 			t = t.Copy()
-			p.path = append(p.path, t)
+			if p.NSFlag == NSStrip {
+				t.Name.Space = ""
+				for i := 0; i < len(t.Attr); i = i + 1 {
+					t.Attr[i].Name.Space = ""
+				}
+			}
+			p.path.push(&t, p.NSFlag == NSPrefix)
 			if len(p.path) > p.MaxDepth {
 				p.path = nil
 				return nil, nil, fmt.Errorf("xmlpicker: depth limit reached %d", p.MaxDepth)
@@ -131,7 +243,7 @@ func (p *Parser) Next() (Path, *Node, error) {
 			if len(p.path) == 0 {
 				p.path = nil
 				p.node = nil
-				return nil, nil, errors.New("xmlpicker: negative depth detected!")
+				return nil, nil, fmt.Errorf("xmlpicker: unexpected end element </%s>", t.Name.Local)
 			}
 			var resultPath Path
 			var resultNode *Node
@@ -139,7 +251,12 @@ func (p *Parser) Next() (Path, *Node, error) {
 				resultPath = p.path
 				resultNode = p.node
 			}
-			p.path = p.path[:len(p.path)-1]
+			_, err := p.path.pop(&t, p.NSFlag != NSStrip)
+			if err != nil {
+				p.path = nil
+				p.node = nil
+				return nil, nil, err
+			}
 			if p.node != nil {
 				p.node = p.node.Parent
 			}
