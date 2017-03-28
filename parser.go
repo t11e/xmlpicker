@@ -8,98 +8,6 @@ import (
 	"strings"
 )
 
-type Node struct {
-	StartElement xml.StartElement
-	Parent       *Node
-	Namespaces   Namespaces
-	Children     []*Node
-}
-
-type Namespaces map[string]string
-
-type Path []*Node
-
-func (node *Node) Text() (string, bool) {
-	return decodeText(&node.StartElement)
-}
-func (node *Node) SetText(text string) {
-	encodeText(&node.StartElement, text)
-}
-
-func decodeText(e *xml.StartElement) (string, bool) {
-	if e.Name.Local != "" || e.Name.Space != "" {
-		return "", false
-	}
-	if len(e.Attr) != 1 {
-		return "", false
-	}
-	if e.Attr[0].Name.Local != "" || e.Attr[0].Name.Space != "" {
-		return "", false
-	}
-	return e.Attr[0].Value, true
-}
-
-func encodeText(e *xml.StartElement, text string) {
-	e.Name.Local = ""
-	e.Name.Space = ""
-	e.Attr = []xml.Attr{{Value: text}}
-}
-
-func (node *Node) Depth() int {
-	d := 0
-	for n := node; n != nil && n.Parent != nil; n = n.Parent {
-		d = d + 1
-	}
-	return d
-}
-
-func (node *Node) LookupPrefix(prefix string) (string, bool) {
-	for n := node; n != nil; n = n.Parent {
-		if ns, ok := n.Namespaces[prefix]; ok {
-			return ns, ok
-		}
-	}
-	return prefix, false
-}
-
-type Selector interface {
-	Matches(node *Node) bool
-}
-
-func PathSelector(path string) Selector {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = "/"
-	}
-	parts := strings.Split(path, "/")
-	for i, v := range parts {
-		parts[i] = strings.TrimSpace(v)
-	}
-	for i, v := range parts {
-		if i != 0 && v == "" {
-			parts[i] = "*"
-		}
-	}
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	return pathSelector(parts)
-}
-
-type pathSelector []string
-
-func (s pathSelector) Matches(node *Node) bool {
-	i := 0
-	for n := node; n != nil && i < len(s); n = n.Parent {
-		p := s[i]
-		if p != "*" && p != n.StartElement.Name.Local {
-			return false
-		}
-		i = i + 1
-	}
-	return i == len(s)
-}
-
 func NewParser(decoder *xml.Decoder, selector Selector) *Parser {
 	p := &Parser{
 		MaxDepth:    1000,
@@ -122,6 +30,10 @@ type Parser struct {
 	selector   Selector
 	tokenCount int
 	node       *Node
+}
+
+type Selector interface {
+	Matches(node *Node) bool
 }
 
 type NSFlag int
@@ -299,53 +211,4 @@ func (p *Parser) pop(end xml.EndElement) (*Node, error) {
 	}
 	p.node = popped.Parent
 	return popped, nil
-}
-
-type Mapper interface {
-	FromNode(node *Node) (map[string]interface{}, error)
-}
-
-type SimpleMapper struct {
-}
-
-func (m SimpleMapper) FromNode(n *Node) (map[string]interface{}, error) {
-	out := make(map[string]interface{})
-	return m.fromNodeImpl(out, n, 0)
-}
-
-func (m SimpleMapper) fromNodeImpl(out map[string]interface{}, n *Node, depth int) (map[string]interface{}, error) {
-	if text, ok := n.Text(); ok {
-		out["#text"] = []string{text}
-		return out, nil
-	}
-	if depth == 0 {
-		out["_name"] = n.StartElement.Name.Local
-	}
-	for _, a := range n.StartElement.Attr {
-		out[fmt.Sprintf("@%s", a.Name.Local)] = a.Value
-	}
-	for _, c := range n.Children {
-		var key string
-		var value interface{}
-		if text, ok := c.Text(); ok {
-			key = "#text"
-			value = text
-		} else {
-			key = c.StartElement.Name.Local
-			var err error
-			value, err = m.fromNodeImpl(make(map[string]interface{}), c, depth+1)
-			if err != nil {
-				return nil, err
-			}
-		}
-		var values []interface{}
-		if prev, ok := out[key]; ok {
-			values = prev.([]interface{})
-		} else {
-			values = make([]interface{}, 0)
-			out[key] = values
-		}
-		out[key] = append(values, value)
-	}
-	return out, nil
 }
