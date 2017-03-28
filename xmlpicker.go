@@ -1,7 +1,6 @@
 package xmlpicker
 
 import (
-	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -10,84 +9,119 @@ import (
 )
 
 type Node struct {
-	Element  *xml.StartElement
-	Text     string
-	Parent   *Node
-	Children []*Node
+	StartElement xml.StartElement
+	Parent       *Node
+	Namespaces   Namespaces
+	Children     []*Node
 }
-
-type Path []*PathElement
 
 type Namespaces map[string]string
 
-type PathElement struct {
-	Name       xml.Name
-	Namespaces Namespaces
+type Path []*Node
+
+func (node *Node) Text() (string, bool) {
+	return decodeText(&node.StartElement)
+}
+func (node *Node) SetText(text string) {
+	encodeText(&node.StartElement, text)
 }
 
-func (p *Path) String() string {
-	var b bytes.Buffer
-	b.WriteRune('/')
-	for i, t := range *p {
-		if i > 0 {
-			b.WriteRune('/')
-		}
-		if t.Name.Space != "" {
-			s, ok := t.Namespaces[t.Name.Space]
-			if !ok {
-				s = "!" + t.Name.Space
-			}
-			b.WriteString(s)
-			b.WriteRune(':')
-		}
-		b.WriteString(t.Name.Local)
+func decodeText(e *xml.StartElement) (string, bool) {
+	if e.Name.Local != "" || e.Name.Space != "" {
+		return "", false
 	}
-	return b.String()
+	if len(e.Attr) != 1 {
+		return "", false
+	}
+	if e.Attr[0].Name.Local != "" || e.Attr[0].Name.Space != "" {
+		return "", false
+	}
+	return e.Attr[0].Value, true
+}
+
+func encodeText(e *xml.StartElement, text string) {
+	e.Name.Local = ""
+	e.Name.Space = ""
+	e.Attr = []xml.Attr{{Value: text}}
+}
+
+func (node *Node) Depth() int {
+	d := 0
+	for n := node; n != nil && n.Parent != nil; n = n.Parent {
+		d = d + 1
+	}
+	return d
+}
+
+func (node *Node) LookupPrefix(prefix string) (string, bool) {
+	for n := node; n != nil; n = n.Parent {
+		if ns, ok := n.Namespaces[prefix]; ok {
+			return ns, ok
+		}
+	}
+	return prefix, false
 }
 
 type Selector interface {
-	Matches(path Path) bool
+	Matches(node *Node) bool
 }
 
-func SimpleSelector(selector string) Selector {
-	parts := strings.Split(selector, "/")
-	if len(parts) > 1 && parts[0] == "" {
-		parts = parts[1:]
+func PathSelector(path string) Selector {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "/"
 	}
-	matchLen := len(parts)
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
+	parts := strings.Split(path, "/")
+	for i, v := range parts {
+		parts[i] = strings.TrimSpace(v)
 	}
-	return simpleSelector{parts, matchLen}
-}
-
-type simpleSelector struct {
-	parts    []string
-	matchLen int
-}
-
-func (s simpleSelector) Matches(path Path) bool {
-	if len(path) != s.matchLen {
-		return false
-	}
-	for i, part := range s.parts {
-		p := path[i]
-		if part != p.Name.Local && part != "*" {
-			return false
+	for i, v := range parts {
+		if i != 0 && v == "" {
+			parts[i] = "*"
 		}
 	}
-	return true
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return pathSelector(parts)
+}
+
+type pathSelector []string
+
+func (s pathSelector) Matches(node *Node) bool {
+	i := 0
+	for n := node; n != nil && i < len(s); n = n.Parent {
+		p := s[i]
+		if p != "*" && p != n.StartElement.Name.Local {
+			return false
+		}
+		i = i + 1
+	}
+	return i == len(s)
 }
 
 func NewParser(decoder *xml.Decoder, selector Selector) *Parser {
-	return &Parser{
+	p := &Parser{
 		MaxDepth:    1000,
 		MaxChildren: 1000,
 		MaxTokens:   -1,
 		decoder:     decoder,
 		selector:    selector,
-		path:        make(Path, 0),
+		node:        &Node{},
 	}
+	return p
+}
+
+type Parser struct {
+	NSFlag      NSFlag
+	MaxDepth    int
+	MaxChildren int
+	MaxTokens   int
+
+	decoder    *xml.Decoder
+	selector   Selector
+	tokenCount int
+	node       *Node
 }
 
 type NSFlag int
@@ -111,87 +145,11 @@ func (f NSFlag) String() string {
 	}
 }
 
-type Parser struct {
-	NSFlag      NSFlag
-	MaxDepth    int
-	MaxChildren int
-	MaxTokens   int
-
-	decoder    *xml.Decoder
-	selector   Selector
-	path       Path
-	tokenCount int
-	node       *Node
-}
-
 var UnexpectedEOF = errors.New("xmlpicker: unexpected EOF")
 
-// push adds start to the path.
-// Namespace handling is similar to xml.Token().
-func (path *Path) push(start *xml.StartElement, mapNamespaces bool) {
-	if !mapNamespaces {
-		*path = append(*path, &PathElement{
-			Name: start.Name,
-		})
-		return
-
-	}
-	var ns Namespaces
-	if len(*path) != 0 {
-		ns = (*path)[len(*path)-1].Namespaces
-	}
-	modifies := false
-	for _, a := range start.Attr {
-		if a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns") {
-			modifies = true
-			break
-		}
-	}
-	if modifies {
-		c := make(Namespaces, len(ns))
-		for k, v := range ns {
-			c[k] = v
-		}
-		ns = c
-		for _, a := range start.Attr {
-			if a.Name.Space == "xmlns" {
-				ns[a.Name.Local] = a.Value
-			}
-			if a.Name.Space == "" && a.Name.Local == "xmlns" { // default space for untagged names
-				ns[""] = a.Value
-			}
-		}
-
-	}
-	*path = append(*path, &PathElement{
-		Name:       start.Name,
-		Namespaces: ns,
-	})
-}
-
-// pop removes the end element from the path and returns an error if it does not match the appropriate start element.
-// Normally xml.Decoder.Token() would do this for us but we are using xml.Decoder.RawToken() instead to allow for
-// access of the XML namespace prefixes.
-// Syntax errors handling is similar to xml.popElement().
-func (path *Path) pop(end *xml.EndElement, checkSpace bool) (*PathElement, error) {
-	i := len(*path) - 1
-	if i < 0 {
-		return nil, fmt.Errorf("xmlpicker: unexpected end element </%s>", end.Name.Local)
-	}
-	start := (*path)[i]
-	if start.Name.Local != end.Name.Local {
-		return nil, fmt.Errorf("xmlpicker: element <%s> closed by </%s>", start.Name.Local, end.Name.Local)
-	}
-	if checkSpace && start.Name.Space != end.Name.Space {
-		return nil, fmt.Errorf("xmlpicker: element <%s> in space %s closed by </%s> in space %s", start.Name.Local, start.Name.Space, end.Name.Local, end.Name.Space)
-	}
-	*path = (*path)[:i]
-	return start, nil
-}
-
-func (p *Parser) Next() (Path, *Node, error) {
-	if p.path == nil {
-		return nil, nil, errors.New("xmlpicker: will no longer consume tokens, Next() called after error")
+func (p *Parser) Next() (*Node, error) {
+	if p.node == nil {
+		return nil, errors.New("xmlpicker: will no longer consume tokens, Next() called after error")
 	}
 	for {
 		var t xml.Token
@@ -202,91 +160,145 @@ func (p *Parser) Next() (Path, *Node, error) {
 			t, err = p.decoder.Token()
 		}
 		if err != nil {
-			if err == io.EOF && (len(p.path) != 0 || p.node != nil) {
-				return nil, nil, UnexpectedEOF
+			if err == io.EOF && p.node.Children != nil {
+				return nil, UnexpectedEOF
 			}
-			return nil, nil, err
+			return nil, err
 		}
 		p.tokenCount = p.tokenCount + 1
 		if p.MaxTokens != -1 && p.tokenCount > p.MaxTokens {
-			p.path = nil
-			return nil, nil, fmt.Errorf("xmlpicker: token limit reached %d", p.MaxTokens)
+			p.node = nil
+			return nil, fmt.Errorf("xmlpicker: token limit reached %d", p.MaxTokens)
 		}
 		switch t := t.(type) {
 		case xml.StartElement:
-			t = t.Copy()
-			if p.NSFlag == NSStrip {
-				t.Name.Space = ""
-				for i := 0; i < len(t.Attr); i = i + 1 {
-					t.Attr[i].Name.Space = ""
-				}
+			p.push(t)
+			if p.node.Depth() > p.MaxDepth {
+				p.node = nil
+				return nil, fmt.Errorf("xmlpicker: depth limit reached %d", p.MaxDepth)
 			}
-			p.path.push(&t, p.NSFlag == NSPrefix)
-			if len(p.path) > p.MaxDepth {
-				p.path = nil
-				return nil, nil, fmt.Errorf("xmlpicker: depth limit reached %d", p.MaxDepth)
-			}
-			if p.node == nil {
-				if p.selector.Matches(p.path) {
-					p.node = &Node{Element: &t}
+			if p.node.Parent.Children == nil {
+				if p.selector.Matches(p.node) {
+					p.node.Children = make([]*Node, 0)
 				}
 				continue
 			}
-			c := &Node{Element: &t}
-			c.Parent = p.node
-			p.node.Children = append(p.node.Children, c)
-			if len(p.node.Children) > p.MaxChildren {
-				return nil, nil, fmt.Errorf("xmlpicker: maximum node child limit reached %d", p.MaxChildren)
+			p.node.Children = make([]*Node, 0)
+			p.node.Parent.Children = append(p.node.Parent.Children, p.node)
+			if len(p.node.Parent.Children) > p.MaxChildren {
+				return nil, fmt.Errorf("xmlpicker: maximum node child limit reached %d", p.MaxChildren)
 			}
-			p.node = c
 		case xml.EndElement:
-			if len(p.path) == 0 {
-				p.path = nil
-				p.node = nil
-				return nil, nil, fmt.Errorf("xmlpicker: unexpected end element </%s>", t.Name.Local)
-			}
-			var resultPath Path
-			var resultNode *Node
-			if p.node != nil && p.node.Parent == nil {
-				resultPath = p.path
-				resultNode = p.node
-			}
-			_, err := p.path.pop(&t, p.NSFlag != NSStrip)
+			prev, err := p.pop(t)
 			if err != nil {
-				p.path = nil
 				p.node = nil
-				return nil, nil, err
+				return nil, err
 			}
-			if p.node != nil {
-				p.node = p.node.Parent
+			if prev.Children != nil && p.node.Children == nil {
+				return prev, nil
 			}
-			if resultPath != nil || resultNode != nil {
-				return resultPath, resultNode, nil
-			}
-
 		case xml.CharData:
-			if p.node == nil {
+			if p.node.Children == nil {
 				continue
 			}
-			t = t.Copy()
-			s := string(t)
-			s = strings.TrimSpace(s)
+			s := strings.TrimSpace(string(t.Copy()))
 			if len(s) == 0 {
 				continue
 			}
-			c := &Node{Text: s}
-			c.Parent = p.node
-			p.node.Children = append(p.node.Children, c)
+			node := &Node{Parent: p.node}
+			node.SetText(s)
+			p.node.Children = append(p.node.Children, node)
 			if len(p.node.Children) > p.MaxChildren {
-				return nil, nil, fmt.Errorf("xmlpicker: maximum node child limit reached %d", p.MaxChildren)
+				return nil, fmt.Errorf("xmlpicker: maximum node child limit reached %d", p.MaxChildren)
 			}
 		case xml.Comment:
 		case xml.ProcInst:
 		case xml.Directive:
 		default:
-			return nil, nil, fmt.Errorf("xmlpicker: unexpected xml token %+v", t)
+			return nil, fmt.Errorf("xmlpicker: unexpected xml token %+v", t)
 		}
 	}
+}
+
+// push adds start to the path.
+// Namespace handling is similar to xml.Token().
+func (p *Parser) push(start xml.StartElement) *Node {
+	element := xml.StartElement{Name: start.Name}
+	if p.NSFlag == NSStrip {
+		element.Name.Space = ""
+	}
+	update := false
+	for _, a := range start.Attr {
+		if a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns") {
+			update = true
+			break
+		}
+		if p.NSFlag == NSStrip && a.Name.Space != "" {
+			update = true
+			break
+		}
+	}
+	var ns Namespaces
+	if !update {
+		element.Attr = make([]xml.Attr, len(start.Attr))
+		copy(element.Attr, start.Attr)
+	} else {
+		if p.NSFlag == NSPrefix {
+			ns = make(Namespaces)
+		}
+		element.Attr = make([]xml.Attr, 0, len(start.Attr))
+		for _, a := range start.Attr {
+			if a.Name.Space == "xmlns" {
+				if ns != nil {
+					ns[a.Name.Local] = a.Value
+				}
+				continue
+			}
+			if a.Name.Space == "" && a.Name.Local == "xmlns" { // default space for untagged names
+				if ns != nil {
+					ns[""] = a.Value
+				}
+				continue
+			}
+			if p.NSFlag == NSStrip {
+				a.Name.Space = ""
+			}
+			element.Attr = append(element.Attr, a)
+		}
+	}
+	pushed := &Node{
+		StartElement: element,
+		Namespaces:   ns,
+		Parent:       p.node,
+	}
+	// TODO needed?
+	//if p.NSFlag == NSPrefix && pushed.StartElement.Name.Space != "" {
+	//	if defaultSpace, ok := pushed.LookupPrefix(""); ok && defaultSpace == pushed.StartElement.Name.Space {
+	//		pushed.StartElement.Name.Space = ""
+	//	}
+	//}
+	p.node = pushed
+	return pushed
+}
+
+// pop removes the end element from the path and returns an error if it does not match the appropriate start element.
+// Normally xml.Decoder.Token() would do this for us but we are using xml.Decoder.RawToken() instead to allow for
+// access of the XML namespace prefixes.
+// Syntax errors handling is similar to xml.popElement().
+func (p *Parser) pop(end xml.EndElement) (*Node, error) {
+	if p.node.Parent == nil {
+		return nil, fmt.Errorf("xmlpicker: unexpected end element </%s>", end.Name.Local)
+	}
+	popped := p.node
+	start := popped.StartElement
+	if start.Name.Local != end.Name.Local {
+		return nil, fmt.Errorf("xmlpicker: element <%s> closed by </%s>", start.Name.Local, end.Name.Local)
+	}
+	if p.NSFlag != NSStrip && start.Name.Space != end.Name.Space {
+		return nil, fmt.Errorf("xmlpicker: element <%s> in space %s closed by </%s> in space %s", start.Name.Local, start.Name.Space, end.Name.Local, end.Name.Space)
+	}
+	p.node = popped.Parent
+	return popped, nil
 }
 
 type Mapper interface {
@@ -296,25 +308,32 @@ type Mapper interface {
 type SimpleMapper struct {
 }
 
-func (xi SimpleMapper) FromNode(n *Node) (map[string]interface{}, error) {
+func (m SimpleMapper) FromNode(n *Node) (map[string]interface{}, error) {
 	out := make(map[string]interface{})
-	if n.Element == nil {
-		out["#text"] = []string{n.Text}
+	return m.fromNodeImpl(out, n, 0)
+}
+
+func (m SimpleMapper) fromNodeImpl(out map[string]interface{}, n *Node, depth int) (map[string]interface{}, error) {
+	if text, ok := n.Text(); ok {
+		out["#text"] = []string{text}
 		return out, nil
 	}
-	for _, a := range n.Element.Attr {
+	if depth == 0 {
+		out["_name"] = n.StartElement.Name.Local
+	}
+	for _, a := range n.StartElement.Attr {
 		out[fmt.Sprintf("@%s", a.Name.Local)] = a.Value
 	}
 	for _, c := range n.Children {
 		var key string
 		var value interface{}
-		if c.Element == nil {
+		if text, ok := c.Text(); ok {
 			key = "#text"
-			value = c.Text
+			value = text
 		} else {
-			key = c.Element.Name.Local
+			key = c.StartElement.Name.Local
 			var err error
-			value, err = xi.FromNode(c)
+			value, err = m.fromNodeImpl(make(map[string]interface{}), c, depth+1)
 			if err != nil {
 				return nil, err
 			}

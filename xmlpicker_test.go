@@ -141,40 +141,44 @@ func TestSimpleSelector(t *testing.T) {
 			expected:       []string{"/root/X2:a", "/root/X:b"},
 		},
 	} {
-		name := fmt.Sprintf("%d %s %s", idx, test.selector, test.nsFlag)
+		var variant string
+		if test.expandPrefixes {
+			variant = " expandPrefixes"
+		}
+		name := fmt.Sprintf("%d %s %s%s", idx, test.selector, test.nsFlag, variant)
 		t.Run(name, func(t *testing.T) {
 			actual := make([]string, 0)
-			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.SimpleSelector(test.selector))
+			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.PathSelector(test.selector))
 			parser.NSFlag = test.nsFlag
 			for {
-				path, _, err := parser.Next()
+				node, err := parser.Next()
 				if err == io.EOF {
 					break
 				}
 				if !assert.NoError(t, err, "%s\nXML:\n%s\n", name, test.xml) {
 					return
 				}
-				var b bytes.Buffer
-				b.WriteRune('/')
-				for i, pe := range path {
-					if i > 0 {
-						b.WriteRune('/')
-					}
-					s := pe.Name.Space
-					if s != "" && test.expandPrefixes {
+				i := node.Depth() + 1
+				parts := make([]string, i, i)
+				for n := node; n.Parent != nil; n = n.Parent {
+					name := n.StartElement.Name
+					space := name.Space
+					if space != "" && test.expandPrefixes {
 						var ok bool
-						s, ok = pe.Namespaces[pe.Name.Space]
-						if !ok {
-							s = fmt.Sprintf("!{%s}MISSING", pe.Name.Space)
+						if space, ok = n.LookupPrefix(name.Space); !ok {
+							space = fmt.Sprintf("!{%space}MISSING", name.Space)
 						}
 					}
-					if s != "" {
-						b.WriteString(s)
-						b.WriteRune(':')
+					var part string
+					if space != "" {
+						part = fmt.Sprintf("%s:%s", space, name.Local)
+					} else {
+						part = name.Local
 					}
-					b.WriteString(pe.Name.Local)
+					i = i - 1
+					parts[i] = part
 				}
-				actual = append(actual, b.String())
+				actual = append(actual, strings.Join(parts, "/"))
 			}
 			assert.Equal(t, test.expected, actual, "%s\nXML:\n%s\n", name, test.xml)
 		})
@@ -355,10 +359,10 @@ func TestParserNext(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			actual := 0
 			var actualErr error
-			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.SimpleSelector("/"))
+			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.PathSelector("/"))
 			parser.NSFlag = test.nsFlag
 			for {
-				_, _, err := parser.Next()
+				_, err := parser.Next()
 				if err == io.EOF {
 					break
 				}
@@ -378,6 +382,223 @@ func TestParserNext(t *testing.T) {
 	}
 }
 
+func startElement(e *xml.Encoder, node *xmlpicker.Node, nsFlag xmlpicker.NSFlag) xml.StartElement {
+	if nsFlag != xmlpicker.NSPrefix {
+		return node.StartElement
+	}
+	var attr []xml.Attr
+	if node.StartElement.Attr != nil {
+		i := len(node.Namespaces) + len(node.StartElement.Attr)
+		attr = make([]xml.Attr, i, i)
+		i = i - 1
+		for _, a := range node.StartElement.Attr {
+			if a.Name.Space != "" {
+				a.Name.Local = a.Name.Space + ":" + a.Name.Local
+				a.Name.Space = ""
+			}
+			attr[i] = a
+			i = i - 1
+		}
+		for k, v := range node.Namespaces {
+			var name string
+			if k == "" {
+				name = "xmlns"
+			} else {
+				name = "xmlns:" + k
+			}
+			attr[i] = xml.Attr{
+				Name:  xml.Name{Local: name},
+				Value: v,
+			}
+			i = i - 1
+		}
+	}
+	name := node.StartElement.Name.Local
+	if node.StartElement.Name.Space != "" {
+		name = node.StartElement.Name.Space + ":" + name
+	}
+	return xml.StartElement{Name: xml.Name{Local: name}, Attr: attr}
+}
+
+func endElement(e *xml.Encoder, node *xmlpicker.Node, nsFlag xmlpicker.NSFlag) xml.EndElement {
+	if nsFlag != xmlpicker.NSPrefix {
+		return xml.EndElement{Name: node.StartElement.Name}
+	}
+	name := node.StartElement.Name.Local
+	if node.StartElement.Name.Space != "" {
+		name = node.StartElement.Name.Space + ":" + name
+	}
+	return xml.EndElement{Name: xml.Name{Local: name}}
+}
+
+func startNode(e *xml.Encoder, node *xmlpicker.Node, nsFlag xmlpicker.NSFlag) error {
+	if node.Parent == nil {
+		return nil
+	}
+	if err := startNode(e, node.Parent, nsFlag); err != nil {
+		return err
+	}
+	return e.EncodeToken(startElement(e, node, nsFlag))
+}
+
+func endNode(e *xml.Encoder, node *xmlpicker.Node, nsFlag xmlpicker.NSFlag) error {
+	if node.Parent == nil {
+		return nil
+	}
+	if err := e.EncodeToken(endElement(e, node, nsFlag)); err != nil {
+		return err
+	}
+	return endNode(e, node.Parent, nsFlag)
+}
+
+func isolateNode(e *xml.Encoder, node *xmlpicker.Node, nsFlag xmlpicker.NSFlag) error {
+	if err := startNode(e, node, nsFlag); err != nil {
+		return err
+	}
+	if text, ok := node.Text(); ok {
+		if err := e.EncodeToken([]byte(text)); err != nil {
+			return err
+		}
+	} else {
+		for _, child := range node.Children {
+			if err := isolateNodeImpl(e, child, nsFlag); err != nil {
+				return err
+			}
+		}
+	}
+	return endNode(e, node, nsFlag)
+}
+
+func isolateNodeImpl(e *xml.Encoder, n *xmlpicker.Node, nsFlag xmlpicker.NSFlag) error {
+	if text, ok := n.Text(); ok {
+		return e.EncodeToken(xml.CharData([]byte(text)))
+	}
+	if err := e.EncodeToken(startElement(e, n, nsFlag)); err != nil {
+		return err
+	}
+	for _, child := range n.Children {
+		if err := isolateNodeImpl(e, child, nsFlag); err != nil {
+			return err
+		}
+	}
+	if err := e.EncodeToken(endElement(e, n, nsFlag)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func TestXMLExporter(t *testing.T) {
+	for idx, test := range []struct {
+		name        string
+		selector    string
+		xml         string
+		nsFlag      xmlpicker.NSFlag
+		expected    string
+		expectedErr string
+	}{
+		{
+			name:     "control",
+			xml:      `<a/>`,
+			selector: "/",
+			expected: `<a></a>`,
+		},
+		{
+			name:     "simple",
+			xml:      `<a><b/><c/></a>`,
+			selector: "/*/",
+			expected: `<a><b></b></a><a><c></c></a>`,
+		},
+		{
+			name:     "deeper 1",
+			xml:      `<a id="1">one<b id="2">two<c id="3">three</c>four</b>five<b id="4">six<c id="5">seven</c>eight</b>nine</a>`,
+			selector: "/*/",
+			expected: `<a id="1"><b id="2">two<c id="3">three</c>four</b></a>` + `<a id="1"><b id="4">six<c id="5">seven</c>eight</b></a>`,
+		},
+		{
+			name:     "deeper 2",
+			xml:      `<a id="1">one<b id="2">two<c id="3">three</c>four</b>five<b id="4">six<c id="5">seven</c>eight</b>nine</a>`,
+			selector: "/*/*/c",
+			expected: `<a id="1"><b id="2"><c id="3">three</c></b></a>` + `<a id="1"><b id="4"><c id="5">seven</c></b></a>`,
+		},
+
+		{
+			name:     "root namespace",
+			xml:      `<a xmlns:a="aaa" foo="1" a:bar="2"/>`,
+			selector: "/",
+			expected: `<a foo="1" xmlns:aaa="aaa" aaa:bar="2"></a>`,
+		},
+		{
+			name:     "root namespace",
+			xml:      `<a xmlns:a="aaa" foo="1" a:bar="2"/>`,
+			selector: "/",
+			nsFlag:   xmlpicker.NSStrip,
+			expected: `<a foo="1" bar="2"></a>`,
+		},
+		{
+			name:     "root namespace",
+			xml:      `<a xmlns:a="aaa" foo="1" a:bar="2"/>`,
+			selector: "/",
+			nsFlag:   xmlpicker.NSPrefix,
+			expected: `<a xmlns:a="aaa" a:bar="2" foo="1"></a>`,
+		},
+
+		{
+			name:     "namespaces",
+			xml:      `<a xmlns="DEF" xmlns:a="aaa" foo="1" a:bar="2"><b id="123" foo="3" a:bar="4">first</b><b id="456" foo="5">second</b></a>`,
+			selector: "/*/",
+			expected: `<a xmlns="DEF" foo="1" xmlns:aaa="aaa" aaa:bar="2"><b xmlns="DEF" id="123" foo="3" aaa:bar="4">first</b></a>` +
+				`<a xmlns="DEF" foo="1" xmlns:aaa="aaa" aaa:bar="2"><b xmlns="DEF" id="456" foo="5">second</b></a>`,
+		},
+		{
+			name:     "namespaces",
+			xml:      `<a xmlns="DEF" xmlns:a="aaa" foo="1" a:bar="2"><b id="123" foo="3" a:bar="4">first</b><b id="456" foo="5">second</b></a>`,
+			selector: "/*/",
+			nsFlag:   xmlpicker.NSStrip,
+			expected: `<a foo="1" bar="2"><b id="123" foo="3" bar="4">first</b></a>` +
+				`<a foo="1" bar="2"><b id="456" foo="5">second</b></a>`,
+		},
+		{
+			name:     "namespaces",
+			xml:      `<a xmlns="DEF" xmlns:a="aaa" foo="1" a:bar="2"><b id="123" foo="3" a:bar="4">first</b><b id="456" foo="5">second</b></a>`,
+			selector: "/*/",
+			nsFlag:   xmlpicker.NSPrefix,
+			expected: `<a xmlns:a="aaa" xmlns="DEF" a:bar="2" foo="1"><b a:bar="4" foo="3" id="123">first</b></a><a xmlns:a="aaa" xmlns="DEF" a:bar="2" foo="1"><b foo="5" id="456">second</b></a>`,
+		},
+	} {
+		name := fmt.Sprintf("%d %s %s", idx, test.name, test.nsFlag)
+		t.Run(name, func(t *testing.T) {
+			var b bytes.Buffer
+			e := xml.NewEncoder(&b)
+			var actualErr error
+			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.PathSelector(test.selector))
+			parser.NSFlag = test.nsFlag
+			for {
+				n, err := parser.Next()
+				if err == io.EOF {
+					e.Flush()
+					break
+				}
+				if err != nil {
+					actualErr = err
+					break
+				}
+				if err := isolateNode(e, n, test.nsFlag); err != nil {
+					actualErr = err
+					break
+				}
+			}
+			if test.expectedErr != "" {
+				assert.EqualError(t, actualErr, test.expectedErr, "%s\nXML:\n%s\n", name, test.xml)
+			} else {
+				assert.NoError(t, actualErr, "%s\nXML:\n%s\n", name, test.xml)
+			}
+			actual := strings.TrimSuffix(b.String(), "\n")
+			assert.Equal(t, test.expected, actual, "%s\nXML:\n%s\nExpected:\n%s\nActual:\n%s\n", name, test.xml, test.expected, actual)
+		})
+	}
+}
+
 func TestSimpleMapper(t *testing.T) {
 	for idx, test := range []struct {
 		name        string
@@ -390,47 +611,56 @@ func TestSimpleMapper(t *testing.T) {
 		{
 			name:     "control",
 			xml:      `<a/>`,
-			expected: `{}`,
+			selector: "/",
+			expected: `{"_name":"a"}`,
 		},
 		{
 			name:     "attributes",
 			xml:      `<a id="1" name="example"/>`,
-			expected: `{"@id":"1","@name":"example"}`,
+			selector: "/",
+			expected: `{"@id":"1","@name":"example","_name":"a"}`,
 		},
 		{
 			name:     "child",
 			xml:      `<a><b/></a>`,
-			expected: `{"b":[{}]}`,
+			selector: "/",
+			expected: `{"_name":"a","b":[{}]}`,
 		},
 		{
 			name:     "repeating child",
 			xml:      `<a><b/><b></b></a>`,
-			expected: `{"b":[{},{}]}`,
+			selector: "/",
+			expected: `{"_name":"a","b":[{},{}]}`,
 		},
 		{
 			name:     "text",
 			xml:      `<a>hello, world!</a>`,
-			expected: `{"#text":["hello, world!"]}`,
+			selector: "/",
+			expected: `{"#text":["hello, world!"],"_name":"a"}`,
 		},
 		{
 			name:     "children with text",
 			xml:      `<a><b>hello</b><c>fred</c><c>wilma</c></a>`,
-			expected: `{"b":[{"#text":["hello"]}],"c":[{"#text":["fred"]},{"#text":["wilma"]}]}`,
+			selector: "/",
+			expected: `{"_name":"a","b":[{"#text":["hello"]}],"c":[{"#text":["fred"]},{"#text":["wilma"]}]}`,
 		},
 		{
 			name:     "text and attributes",
 			xml:      `<a id="first">hello, world!</a>`,
-			expected: `{"#text":["hello, world!"],"@id":"first"}`,
+			selector: "/",
+			expected: `{"#text":["hello, world!"],"@id":"first","_name":"a"}`,
 		},
 		{
 			name:     "text and attributes and children",
 			xml:      `<a id="first"><b id="second">hello</b><c id="third">fred</c><c>wilma</c><c id="last"/></a>`,
-			expected: `{"@id":"first","b":[{"#text":["hello"],"@id":"second"}],"c":[{"#text":["fred"],"@id":"third"},{"#text":["wilma"]},{"@id":"last"}]}`,
+			selector: "/",
+			expected: `{"@id":"first","_name":"a","b":[{"#text":["hello"],"@id":"second"}],"c":[{"#text":["fred"],"@id":"third"},{"#text":["wilma"]},{"@id":"last"}]}`,
 		},
 		{
 			name:     "mixed text and children",
 			xml:      `<a>hello <b>fred</b> and <b>wilma</b></a>`,
-			expected: `{"#text":["hello","and"],"b":[{"#text":["fred"]},{"#text":["wilma"]}]}`,
+			selector: "/",
+			expected: `{"#text":["hello","and"],"_name":"a","b":[{"#text":["fred"]},{"#text":["wilma"]}]}`,
 		},
 	} {
 		name := fmt.Sprintf("%d %s %s", idx, test.name, test.nsFlag)
@@ -438,16 +668,12 @@ func TestSimpleMapper(t *testing.T) {
 			var b bytes.Buffer
 			e := json.NewEncoder(&b)
 			e.SetEscapeHTML(false)
-			selector := test.selector
-			if selector == "" {
-				selector = "/"
-			}
 			mapper := xmlpicker.SimpleMapper{}
 			var actualErr error
-			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.SimpleSelector(test.selector))
+			parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.PathSelector(test.selector))
 			parser.NSFlag = test.nsFlag
 			for {
-				_, n, err := parser.Next()
+				n, err := parser.Next()
 				if err == io.EOF {
 					break
 				}

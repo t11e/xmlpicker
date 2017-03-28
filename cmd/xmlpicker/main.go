@@ -19,7 +19,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: xmlpicker selector file...")
 		os.Exit(1)
 	}
-	selector := xmlpicker.SimpleSelector(args[0])
+	selector := xmlpicker.PathSelector(args[0])
 	mapper := xmlpicker.SimpleMapper{}
 	args = args[1:]
 	if len(args) == 0 {
@@ -51,7 +51,7 @@ func process(filename string, selector xmlpicker.Selector, mapper xmlpicker.Mapp
 	//decoder.CharsetReader = charset.NewReaderLabel
 	parser := xmlpicker.NewParser(decoder, selector)
 	for {
-		_, n, err := parser.Next()
+		n, err := parser.Next()
 		if err == io.EOF {
 			break
 		}
