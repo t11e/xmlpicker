@@ -36,16 +36,24 @@ xmlpicker /listing/offices/office example.xml
 ```
 ```json
 {
+  "_name": "office",
   "id": [
     {
-      "#text": "123"
+      "#text": [
+        "123"
+      ]
     }
   ]
 }
+```
+```json
 {
+  "_name": "office",
   "id": [
     {
-      "#text": "124"
+      "#text": [
+        "124"
+      ]
     }
   ]
 }
@@ -58,6 +66,7 @@ xmlpicker / example.xml
 ```json
 {
   "@id": "123",
+  "_name": "listing",
   "offices": [
     {
       "@count": "2",
@@ -65,14 +74,18 @@ xmlpicker / example.xml
         {
           "id": [
             {
-              "#text": "123"
+              "#text": [
+                "123"
+              ]
             }
           ]
         },
         {
           "id": [
             {
-              "#text": "124"
+              "#text": [
+                "124"
+              ]
             }
           ]
         }
