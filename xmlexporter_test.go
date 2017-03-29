@@ -37,13 +37,15 @@ func TestXMLExporter(t *testing.T) {
 			name:     "deeper 1",
 			xml:      `<a id="1">one<b id="2">two<c id="3">three</c>four</b>five<b id="4">six<c id="5">seven</c>eight</b>nine</a>`,
 			selector: "/*/",
-			expected: `<a id="1"><b id="2">two<c id="3">three</c>four</b></a>` + `<a id="1"><b id="4">six<c id="5">seven</c>eight</b></a>`,
+			expected: `<a id="1"><b id="2">two<c id="3">three</c>four</b></a>` +
+				`<a id="1"><b id="4">six<c id="5">seven</c>eight</b></a>`,
 		},
 		{
 			name:     "deeper 2",
 			xml:      `<a id="1">one<b id="2">two<c id="3">three</c>four</b>five<b id="4">six<c id="5">seven</c>eight</b>nine</a>`,
 			selector: "/*/*/c",
-			expected: `<a id="1"><b id="2"><c id="3">three</c></b></a>` + `<a id="1"><b id="4"><c id="5">seven</c></b></a>`,
+			expected: `<a id="1"><b id="2"><c id="3">three</c></b></a>` +
+				`<a id="1"><b id="4"><c id="5">seven</c></b></a>`,
 		},
 
 		{
@@ -64,7 +66,7 @@ func TestXMLExporter(t *testing.T) {
 			xml:      `<a xmlns:a="aaa" foo="1" a:bar="2"/>`,
 			selector: "/",
 			nsFlag:   xmlpicker.NSPrefix,
-			expected: `<a xmlns:a="aaa" a:bar="2" foo="1"></a>`,
+			expected: `<a xmlns:a="aaa" foo="1" a:bar="2"></a>`,
 		},
 
 		{
@@ -87,7 +89,8 @@ func TestXMLExporter(t *testing.T) {
 			xml:      `<a xmlns="DEF" xmlns:a="aaa" foo="1" a:bar="2"><b id="123" foo="3" a:bar="4">first</b><b id="456" foo="5">second</b></a>`,
 			selector: "/*/",
 			nsFlag:   xmlpicker.NSPrefix,
-			expected: `<a xmlns:a="aaa" xmlns="DEF" a:bar="2" foo="1"><b a:bar="4" foo="3" id="123">first</b></a><a xmlns:a="aaa" xmlns="DEF" a:bar="2" foo="1"><b foo="5" id="456">second</b></a>`,
+			expected: `<a xmlns="DEF" xmlns:a="aaa" foo="1" a:bar="2"><b id="123" foo="3" a:bar="4">first</b></a>` +
+				`<a xmlns="DEF" xmlns:a="aaa" foo="1" a:bar="2"><b id="456" foo="5">second</b></a>`,
 		},
 	} {
 		name := fmt.Sprintf("%d %s %s", idx, test.name, test.nsFlag)

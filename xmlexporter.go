@@ -2,6 +2,7 @@ package xmlpicker
 
 import (
 	"encoding/xml"
+	"sort"
 )
 
 // TODO Productize this functionality and move its test file to the _test module
@@ -12,29 +13,32 @@ func startElement(e *xml.Encoder, node *Node, nsFlag NSFlag) xml.StartElement {
 	}
 	var attr []xml.Attr
 	if node.StartElement.Attr != nil {
-		i := len(node.Namespaces) + len(node.StartElement.Attr)
-		attr = make([]xml.Attr, i, i)
-		i = i - 1
+		attr = make([]xml.Attr, 0, len(node.Namespaces)+len(node.StartElement.Attr))
+		if len(node.Namespaces) != 0 {
+			ks := make([]string, 0, len(node.Namespaces))
+			for k := range node.Namespaces {
+				ks = append(ks, k)
+			}
+			sort.Strings(ks)
+			for _, k := range ks {
+				var name string
+				if k == "" {
+					name = "xmlns"
+				} else {
+					name = "xmlns:" + k
+				}
+				attr = append(attr, xml.Attr{
+					Name:  xml.Name{Local: name},
+					Value: node.Namespaces[k],
+				})
+			}
+		}
 		for _, a := range node.StartElement.Attr {
 			if a.Name.Space != "" {
 				a.Name.Local = a.Name.Space + ":" + a.Name.Local
 				a.Name.Space = ""
 			}
-			attr[i] = a
-			i = i - 1
-		}
-		for k, v := range node.Namespaces {
-			var name string
-			if k == "" {
-				name = "xmlns"
-			} else {
-				name = "xmlns:" + k
-			}
-			attr[i] = xml.Attr{
-				Name:  xml.Name{Local: name},
-				Value: v,
-			}
-			i = i - 1
+			attr = append(attr, a)
 		}
 	}
 	name := node.StartElement.Name.Local
