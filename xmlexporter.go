@@ -3,9 +3,16 @@ package xmlpicker
 import (
 	"encoding/xml"
 	"sort"
+	"strings"
 )
 
 // TODO Productize this functionality and move its test file to the _test module
+
+func processText(text string) string {
+	text = strings.Replace(text, "\n", "&#10;", -1)
+	text = strings.Replace(text, "\r", "&#13;", -1)
+	return text
+}
 
 func startElement(e *xml.Encoder, node *Node, nsFlag NSFlag) xml.StartElement {
 	var attr []xml.Attr
@@ -92,7 +99,7 @@ func XMLExport(e *xml.Encoder, node *Node, nsFlag NSFlag) error {
 		return err
 	}
 	if text, ok := node.Text(); ok {
-		if err := e.EncodeToken([]byte(text)); err != nil {
+		if err := e.EncodeToken([]byte(processText(text))); err != nil {
 			return err
 		}
 	} else {
@@ -107,7 +114,7 @@ func XMLExport(e *xml.Encoder, node *Node, nsFlag NSFlag) error {
 
 func isolateNodeImpl(e *xml.Encoder, n *Node, nsFlag NSFlag) error {
 	if text, ok := n.Text(); ok {
-		return e.EncodeToken(xml.CharData([]byte(text)))
+		return e.EncodeToken(xml.CharData([]byte(processText(text))))
 	}
 	if err := e.EncodeToken(startElement(e, n, nsFlag)); err != nil {
 		return err
