@@ -8,12 +8,18 @@ import (
 // TODO Productize this functionality and move its test file to the _test module
 
 func startElement(e *xml.Encoder, node *Node, nsFlag NSFlag) xml.StartElement {
-	if nsFlag != NSPrefix {
-		return node.StartElement
-	}
 	var attr []xml.Attr
-	if node.StartElement.Attr != nil {
+	if nsFlag != NSPrefix || (node.StartElement.Attr == nil && node.Namespaces == nil) {
+		attr = node.StartElement.Attr
+	} else {
 		attr = make([]xml.Attr, 0, len(node.Namespaces)+len(node.StartElement.Attr))
+		for _, a := range node.StartElement.Attr {
+			if a.Name.Space != "" {
+				a.Name.Local = a.Name.Space + ":" + a.Name.Local
+				a.Name.Space = ""
+			}
+			attr = append(attr, a)
+		}
 		if len(node.Namespaces) != 0 {
 			ks := make([]string, 0, len(node.Namespaces))
 			for k := range node.Namespaces {
@@ -33,30 +39,32 @@ func startElement(e *xml.Encoder, node *Node, nsFlag NSFlag) xml.StartElement {
 				})
 			}
 		}
-		for _, a := range node.StartElement.Attr {
-			if a.Name.Space != "" {
-				a.Name.Local = a.Name.Space + ":" + a.Name.Local
-				a.Name.Space = ""
-			}
-			attr = append(attr, a)
+	}
+	result := xml.StartElement{Name: node.StartElement.Name, Attr: attr}
+	if result.Name.Space != "" {
+		if nsFlag == NSPrefix {
+			result.Name.Local = result.Name.Space + ":" + result.Name.Local
+			result.Name.Space = ""
+		}
+		if nsFlag == NSExpand && result.Name.Space == node.Parent.StartElement.Name.Space {
+			result.Name.Space = ""
 		}
 	}
-	name := node.StartElement.Name.Local
-	if node.StartElement.Name.Space != "" {
-		name = node.StartElement.Name.Space + ":" + name
-	}
-	return xml.StartElement{Name: xml.Name{Local: name}, Attr: attr}
+	return result
 }
 
 func endElement(e *xml.Encoder, node *Node, nsFlag NSFlag) xml.EndElement {
-	if nsFlag != NSPrefix {
-		return xml.EndElement{Name: node.StartElement.Name}
+	result := xml.EndElement{Name: node.StartElement.Name}
+	if result.Name.Space != "" {
+		if nsFlag == NSPrefix && result.Name.Space != "" {
+			result.Name.Local = result.Name.Space + ":" + result.Name.Local
+			result.Name.Space = ""
+		}
+		if nsFlag == NSExpand && result.Name.Space == node.Parent.StartElement.Name.Space {
+			result.Name.Space = ""
+		}
 	}
-	name := node.StartElement.Name.Local
-	if node.StartElement.Name.Space != "" {
-		name = node.StartElement.Name.Space + ":" + name
-	}
-	return xml.EndElement{Name: xml.Name{Local: name}}
+	return result
 }
 
 func startNode(e *xml.Encoder, node *Node, nsFlag NSFlag) error {
