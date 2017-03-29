@@ -48,28 +48,14 @@ func main() {
 
 func mainImpl(s xmlpicker.Selector, fs []string, proc processor) error {
 	for _, f := range fs {
-		if err := withParser(f, s, func(parser *xmlpicker.Parser) error {
-			for {
-				n, err := parser.Next()
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					return err
-				}
-				if err := proc.Process(n); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
+		if err := parse(f, s, proc); err != nil {
 			return err
 		}
 	}
 	return proc.Finish()
 }
 
-func withParser(filename string, selector xmlpicker.Selector, next func(*xmlpicker.Parser) error) error {
+func parse(filename string, selector xmlpicker.Selector, proc processor) error {
 	raw, err := open(filename)
 	if err != nil {
 		return err
@@ -84,7 +70,20 @@ func withParser(filename string, selector xmlpicker.Selector, next func(*xmlpick
 	decoder.Strict = true
 	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
 	//decoder.CharsetReader = charset.NewReaderLabel
-	return next(xmlpicker.NewParser(decoder, selector))
+	parser := xmlpicker.NewParser(decoder, selector)
+	for {
+		n, err := parser.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if err := proc.Process(n); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type processor interface {
