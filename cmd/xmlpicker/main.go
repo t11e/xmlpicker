@@ -118,24 +118,23 @@ func (p *jsonProcessor) Finish() error {
 }
 
 func newXMLProcessor(w io.Writer) *xmlProcessor {
-	e := xml.NewEncoder(w)
 	return &xmlProcessor{
-		writer:  w,
-		encoder: e,
+		writer:   w,
+		exporter: &xmlpicker.XMLExporter{Encoder: xml.NewEncoder(w)},
 	}
 }
 
 type xmlProcessor struct {
-	writer  io.Writer
-	encoder *xml.Encoder
+	writer   io.Writer
+	exporter *xmlpicker.XMLExporter
 }
 
 func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
-	if err := xmlpicker.XMLExport(p.encoder, node, xmlpicker.NSExpand); err != nil {
+	if err := p.exporter.EncodeNode(node); err != nil {
 		return err
 	}
 	// must flush here to allow us to send the newline directly to the writer afterward
-	if err := p.encoder.Flush(); err != nil {
+	if err := p.exporter.Encoder.Flush(); err != nil {
 		return err
 	}
 	if _, err := p.writer.Write([]byte{'\n'}); err != nil {
@@ -145,7 +144,7 @@ func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
 }
 
 func (p *xmlProcessor) Finish() error {
-	return p.encoder.Flush()
+	return p.exporter.Encoder.Flush()
 }
 
 // Opens the filename for reading, uses stdin if it is "-" the returned Reader should be closed.

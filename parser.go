@@ -92,6 +92,9 @@ func (p *Parser) Next() (*Node, error) {
 			if p.node.Parent.Children == nil {
 				if p.selector.Matches(p.node) {
 					p.node.Children = make([]*Node, 0)
+					if p.NSFlag == NSPrefix && p.node.Namespaces == nil {
+						p.node.Namespaces = make(Namespaces, 0)
+					}
 				}
 				continue
 			}

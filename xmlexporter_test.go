@@ -82,21 +82,21 @@ func TestXMLExporter(t *testing.T) {
 				t.Run(nsFlag.String(), func(t *testing.T) {
 					name := fmt.Sprintf("%d %s %s", idx, test.name, nsFlag)
 					var b bytes.Buffer
-					e := xml.NewEncoder(&b)
+					e := xmlpicker.XMLExporter{Encoder: xml.NewEncoder(&b)}
 					var actualErr error
 					parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.PathSelector(test.selector))
 					parser.NSFlag = nsFlag
 					for {
 						n, err := parser.Next()
 						if err == io.EOF {
-							e.Flush()
+							e.Encoder.Flush()
 							break
 						}
 						if err != nil {
 							actualErr = err
 							break
 						}
-						if err := xmlpicker.XMLExport(e, n, nsFlag); err != nil {
+						if err := e.EncodeNode(n); err != nil {
 							actualErr = err
 							break
 						}
@@ -532,21 +532,21 @@ func TestXMLExporter_Namespaces(t *testing.T) {
 				t.Run(scenario.nsFlag.String(), func(t *testing.T) {
 					name := fmt.Sprintf("%d %s %s", idx, test.name, scenario.nsFlag)
 					var b bytes.Buffer
-					e := xml.NewEncoder(&b)
+					e := xmlpicker.XMLExporter{Encoder: xml.NewEncoder(&b)}
 					var actualErr error
 					parser := xmlpicker.NewParser(xml.NewDecoder(strings.NewReader(test.xml)), xmlpicker.PathSelector(test.selector))
 					parser.NSFlag = scenario.nsFlag
 					for {
 						n, err := parser.Next()
 						if err == io.EOF {
-							e.Flush()
+							e.Encoder.Flush()
 							break
 						}
 						if err != nil {
 							actualErr = err
 							break
 						}
-						if err := xmlpicker.XMLExport(e, n, scenario.nsFlag); err != nil {
+						if err := e.EncodeNode(n); err != nil {
 							actualErr = err
 							break
 						}
