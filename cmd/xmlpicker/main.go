@@ -5,57 +5,93 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 
+	flags "github.com/jessevdk/go-flags"
 	"github.com/t11e/xmlpicker"
 )
 
+type cmds struct {
+	jsonCmd `command:"json" description:"convert to JSON"`
+	xmlCmd  `command:"xml" description:"convert to XML"`
+}
+
+type options struct {
+	Selector  string `short:"s" long:"selector" default:"/" description:"path selector to describe which nodes are exported"`
+	Namespace string `short:"n" long:"namespace" choice:"expand" choice:"strip" choice:"prefix" default:"prefix" description:"how to handle namespaces"`
+}
+
+func (o *options) NewSelector() xmlpicker.Selector {
+	return xmlpicker.PathSelector(o.Selector)
+}
+
+func (o *options) NSFlag() xmlpicker.NSFlag {
+	switch o.Namespace {
+	case "strip":
+		return xmlpicker.NSStrip
+	case "expand":
+		return xmlpicker.NSExpand
+	case "prefix":
+		return xmlpicker.NSPrefix
+	}
+	panic("Bad namespace: " + o.Namespace)
+}
+
+type jsonCmd struct {
+	Options options
+	Pretty  bool `short:"p" long:"pretty" description:"generated formatted JSON"`
+	Args    struct {
+		Filenames []string `required:"1" positional-arg-name:"file"`
+	} `positional-args:"yes"`
+}
+
+func (c *jsonCmd) Execute(_ []string) error {
+	p := newJSONProcessor(os.Stdout)
+	if c.Pretty {
+		p.encoder.SetIndent("", "    ")
+	}
+	return mainImpl(&c.Options, c.Args.Filenames, p)
+}
+
+type xmlCmd struct {
+	Options options
+	Pretty  bool `short:"p" long:"pretty" description:"generated formatted XML"`
+	Args    struct {
+		Filenames []string `required:"1" positional-arg-name:"file"`
+	} `positional-args:"yes"`
+}
+
+func (c *xmlCmd) Execute(_ []string) error {
+	p := newXMLProcessor(os.Stdout)
+	if c.Pretty {
+		p.exporter.Encoder.Indent("", "    ")
+	}
+	return mainImpl(&c.Options, c.Args.Filenames, p)
+}
+
 func main() {
-	args := os.Args[1:]
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: xmlpicker json|xml selector file...")
-		os.Exit(1)
-	}
-	var w io.Writer
-	w = os.Stdout
-	var proc processor
-	outformat := args[0]
-	switch outformat {
-	case "json":
-		jp := newJSONProcessor(w)
-		// TODO Override any settings on jp
-		proc = jp
-	case "xml":
-		xp := newXMLProcessor(w)
-		// TODO Override any settings on xp
-		proc = xp
-	default:
-		panic("invalid outformat")
-	}
-	args = args[1:]
-	s := xmlpicker.PathSelector(args[0])
-	args = args[1:]
-	if len(args) == 0 {
-		args = []string{"-"}
-	}
-	if err := mainImpl(s, args, proc); err != nil {
+	parser := flags.NewParser(&cmds{}, flags.Default)
+	_, err := parser.Parse()
+	if err != nil {
+		if _, ok := err.(*flags.Error); ok {
+			os.Exit(2)
+		}
 		panic(err)
 	}
 }
 
-func mainImpl(s xmlpicker.Selector, fs []string, proc processor) error {
+func mainImpl(o *options, fs []string, proc processor) error {
 	for _, f := range fs {
-		if err := parse(f, s, proc); err != nil {
+		if err := parse(f, o, proc); err != nil {
 			return err
 		}
 	}
 	return proc.Finish()
 }
 
-func parse(filename string, selector xmlpicker.Selector, proc processor) error {
+func parse(filename string, o *options, proc processor) error {
 	raw, err := open(filename)
 	if err != nil {
 		return err
@@ -70,7 +106,8 @@ func parse(filename string, selector xmlpicker.Selector, proc processor) error {
 	decoder.Strict = true
 	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
 	//decoder.CharsetReader = charset.NewReaderLabel
-	parser := xmlpicker.NewParser(decoder, selector)
+	parser := xmlpicker.NewParser(decoder, o.NewSelector())
+	parser.NSFlag = o.NSFlag()
 	for {
 		n, err := parser.Next()
 		if err == io.EOF {

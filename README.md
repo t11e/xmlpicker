@@ -5,14 +5,7 @@ where each indidual chunk can be held in memory for processing.
 
 # Usage
 
-To convert one or more XML files to a JSON stream:
-
-```
-xmlpicker selector file...
-```
-
-Where selector is a simple XML path matcher that determines which
-nodes are converted to JSON objects.
+To convert one or more XML files to a JSON or XML stream:
 
 # Example
 
@@ -30,70 +23,121 @@ Input file:
 </listing>
 ```
 
-Convert just office nodes:
+Select the entire document as JSON:
 ```sh
-xmlpicker /listing/offices/office example.xml
+xmlpicker json --pretty example.xml
 ```
 ```json
 {
-  "_name": "office",
-  "id": [
-    {
-      "#text": [
-        "123"
-      ]
-    }
-  ]
-}
-```
-```json
-{
-  "_name": "office",
-  "id": [
-    {
-      "#text": [
-        "124"
-      ]
-    }
-  ]
+    "@id": "123",
+    "_name": "listing",
+    "_namespaces": {},
+    "offices": [
+        {
+            "@count": "2",
+            "office": [
+                {
+                    "id": [
+                        {
+                            "#text": [
+                                "123"
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": [
+                        {
+                            "#text": [
+                                "124"
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
 }
 ```
 
-Convert the root node:
+Select just office nodes as JSON:
 ```sh
-xmlpicker / example.xml
+xmlpicker json --pretty --selector /listing/offices/office example.xml
 ```
 ```json
 {
-  "@id": "123",
-  "_name": "listing",
-  "offices": [
-    {
-      "@count": "2",
-      "office": [
+    "_name": "office",
+    "_namespaces": {},
+    "id": [
         {
-          "id": [
-            {
-              "#text": [
+            "#text": [
                 "123"
-              ]
-            }
-          ]
-        },
-        {
-          "id": [
-            {
-              "#text": [
-                "124"
-              ]
-            }
-          ]
+            ]
         }
-      ]
-    }
-  ]
+    ]
 }
 ```
+```json
+{
+    "_name": "office",
+    "_namespaces": {},
+    "id": [
+        {
+            "#text": [
+                "124"
+            ]
+        }
+    ]
+}
+```
+
+Select the entire document as XML:
+```sh
+xmlpicker xml --pretty example.xml
+```
+```xml
+<listing id="123">
+    <offices count="2">
+        <office>
+            <id>123</id>
+        </office>
+        <office>
+            <id>124</id>
+        </office>
+    </offices>
+</listing>
+```
+
+
+Select just office nodes as XML:
+```sh
+ xmlpicker xml --pretty --selector /listing/offices/office example.xml
+```
+```xml
+<listing id="123">
+    <offices count="2">
+        <office>
+            <id>123</id>
+        </office>
+    </offices>
+</listing>
+```
+```xml
+<listing id="123">
+    <offices count="2">
+        <office>
+            <id>124</id>
+        </office>
+    </offices>
+</listing>
+```
+
+By default, the `xmlpicker` tool preserves namespace prefixes from the original XML file. You can override this with
+the `--namespace=` option. Possible values are:
+ 
+ * `--namespace=prefix` preserve the original namespace with their prefixes 
+ * `--namespace=strip` strip out any namespace information
+ * `--namespace=expand` preserve just the namespace values, drop their prefixes
 
 # Contributions
 

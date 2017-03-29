@@ -1,6 +1,8 @@
-hash: e442af19c212951d8ed2a1f00c69306be5e3e78ac20c1503f9165df9d113afd4
-updated: 2017-03-23T11:30:16.203808735-04:00
-imports: []
+hash: d1fd9f3a2f01806d9427c005063b716132f4b935514f2a7f44ff6527c08beec2
+updated: 2017-03-29T11:09:01.491328555-04:00
+imports:
+- name: github.com/jessevdk/go-flags
+  version: 48cf8722c3375517aba351d1f7577c40663a4407
 testImports:
 - name: github.com/davecgh/go-spew
   version: 6d212800a42e8ab5c146b8ace3490ee17e5225f9

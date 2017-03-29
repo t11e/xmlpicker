@@ -76,6 +76,8 @@ func TestSimpleMapper(t *testing.T) {
 			selector: "/",
 			expected: `{"#text":["hello","and"],"_name":"a","b":[{"#text":["fred"]},{"#text":["wilma"]}]}`,
 		},
+
+		// TODO Add test coverage to show how namespaces are handled
 	} {
 		name := fmt.Sprintf("%d %s %s", idx, test.name, test.nsFlag)
 		t.Run(name, func(t *testing.T) {
