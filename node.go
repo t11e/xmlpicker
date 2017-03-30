@@ -1,6 +1,9 @@
 package xmlpicker
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+	"strings"
+)
 
 type Node struct {
 	StartElement xml.StartElement
@@ -52,4 +55,17 @@ func (node *Node) LookupPrefix(prefix string) (string, bool) {
 		}
 	}
 	return prefix, false
+}
+
+type FormatNodePath Node
+
+func (fnp *FormatNodePath) String() string {
+	node := (*Node)(fnp)
+	i := node.Depth() + 1
+	parts := make([]string, i, i)
+	for n := node; n.Parent != nil; n = n.Parent {
+		i = i - 1
+		parts[i] = n.StartElement.Name.Local
+	}
+	return strings.Join(parts, "/")
 }

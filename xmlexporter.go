@@ -2,6 +2,7 @@ package xmlpicker
 
 import (
 	"encoding/xml"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -72,24 +73,35 @@ func (e *XMLExporter) encodeStartElement(node *Node) error {
 	if node.Namespaces != nil {
 		e.hasNS = true
 	}
-	token := xml.StartElement{Name: node.StartElement.Name, Attr: e.fixAttributes(node)}
-	e.fixElementName(&token.Name, node.Parent)
+	attr, err := e.fixAttributes(node)
+	if err != nil {
+		return err
+	}
+	token := xml.StartElement{Name: node.StartElement.Name, Attr: attr}
+	if err := e.fixElementName(&token.Name, node); err != nil {
+		return err
+	}
 	return e.Encoder.EncodeToken(token)
 }
 
 func (e *XMLExporter) encodeEndElement(node *Node) error {
 	token := xml.EndElement{Name: node.StartElement.Name}
-	e.fixElementName(&token.Name, node.Parent)
+	if err := e.fixElementName(&token.Name, node); err != nil {
+		return err
+	}
 	return e.Encoder.EncodeToken(token)
 }
 
-func (e *XMLExporter) fixAttributes(node *Node) []xml.Attr {
+func (e *XMLExporter) fixAttributes(node *Node) ([]xml.Attr, error) {
 	if !e.hasNS {
-		return node.StartElement.Attr
+		return node.StartElement.Attr, nil
 	}
 	attr := make([]xml.Attr, 0, len(node.Namespaces)+len(node.StartElement.Attr))
 	for _, a := range node.StartElement.Attr {
 		if a.Name.Space != "" {
+			if err := e.validatePrefix(node, a.Name.Space); err != nil {
+				return nil, err
+			}
 			a.Name.Local = a.Name.Space + ":" + a.Name.Local
 			a.Name.Space = ""
 		}
@@ -114,19 +126,33 @@ func (e *XMLExporter) fixAttributes(node *Node) []xml.Attr {
 			})
 		}
 	}
-	return attr
+	return attr, nil
 }
 
-func (e *XMLExporter) fixElementName(name *xml.Name, parent *Node) {
+func (e *XMLExporter) fixElementName(name *xml.Name, node *Node) error {
 	if name.Space != "" {
 		if e.hasNS && name.Space != "" {
+			if err := e.validatePrefix(node, name.Space); err != nil {
+				return err
+			}
 			name.Local = name.Space + ":" + name.Local
 			name.Space = ""
 		}
-		if name.Space == parent.StartElement.Name.Space {
+		if name.Space == node.Parent.StartElement.Name.Space {
 			name.Space = ""
 		}
 	}
+	return nil
+}
+
+func (e *XMLExporter) validatePrefix(node *Node, prefix string) error {
+	if !e.hasNS || prefix == "" || prefix == "xml" {
+		return nil
+	}
+	if _, ok := node.LookupPrefix(prefix); !ok {
+		return fmt.Errorf("xmlpicker: undeclared prefix %s at %s", prefix, (*FormatNodePath)(node))
+	}
+	return nil
 }
 
 func (e *XMLExporter) encodeText(text string) error {

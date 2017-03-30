@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 
 	flags "github.com/jessevdk/go-flags"
 	"github.com/t11e/xmlpicker"
@@ -56,19 +57,44 @@ func (c *jsonCmd) Execute(_ []string) error {
 }
 
 type xmlCmd struct {
-	Options options
-	Pretty  bool `short:"p" long:"pretty" description:"generated formatted XML"`
-	Args    struct {
+	Options           options
+	Pretty            bool   `short:"p" long:"pretty" description:"generated formatted XML"`
+	ContainerXml      string `long:"container-xml" description:"xml container for output elements, if empty output each one in its original position"`
+	ContainerSelector string `long:"container-selector" description:"used to find the first matching path in --container-xml' when generating the output, the rest of container-xml is ignored"`
+	Args              struct {
 		Filenames []string `required:"1" positional-arg-name:"file"`
 	} `positional-args:"yes"`
 }
 
 func (c *xmlCmd) Execute(_ []string) error {
 	p := newXMLProcessor(os.Stdout)
+	var err error
+	p.containerNode, err = c.createContainerNode()
+	if err != nil {
+		return err
+	}
 	if c.Pretty {
 		p.exporter.Encoder.Indent("", "    ")
 	}
 	return mainImpl(&c.Options, c.Args.Filenames, p)
+}
+
+func (c *xmlCmd) createContainerNode() (*xmlpicker.Node, error) {
+	if c.ContainerXml == "" {
+		return nil, nil
+	}
+	r := strings.NewReader(c.ContainerXml)
+	decoder := xml.NewDecoder(r)
+	decoder.Strict = true
+	//TODO Add dependency on "golang.org/x/net/html/charset" for more charset support
+	//decoder.CharsetReader = charset.NewReaderLabel
+	parser := xmlpicker.NewParser(decoder, xmlpicker.PathSelector(c.ContainerSelector))
+	parser.NSFlag = c.Options.NSFlag()
+	node, err := parser.Next()
+	if err != nil {
+		return nil, err
+	}
+	return node, nil
 }
 
 func main() {
@@ -162,11 +188,20 @@ func newXMLProcessor(w io.Writer) *xmlProcessor {
 }
 
 type xmlProcessor struct {
-	writer   io.Writer
-	exporter *xmlpicker.XMLExporter
+	writer        io.Writer
+	exporter      *xmlpicker.XMLExporter
+	containerNode *xmlpicker.Node
 }
 
 func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
+	var prevContainer *xmlpicker.Node
+	if p.containerNode != nil {
+		prevContainer = node.Parent
+		node.Parent = p.containerNode
+		defer func() {
+			node.Parent = prevContainer
+		}()
+	}
 	if err := p.exporter.EncodeNode(node); err != nil {
 		return err
 	}

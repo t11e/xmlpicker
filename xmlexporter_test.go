@@ -200,11 +200,8 @@ func TestXMLExporter_Namespaces(t *testing.T) {
 						`<a><b id="789" foo="3">third</b></a>`,
 				},
 				{
-					nsFlag: xmlpicker.NSPrefix,
-					expected: `` +
-						`<a><b id="123" a:foo="1">first</b></a>` +
-						`<a><b id="456" b:foo="2">second</b></a>` +
-						`<a><b id="789" c:foo="3">third</b></a>`,
+					nsFlag:      xmlpicker.NSPrefix,
+					expectedErr: "xmlpicker: undeclared prefix a at /a/b",
 				},
 			},
 		},
@@ -233,11 +230,8 @@ func TestXMLExporter_Namespaces(t *testing.T) {
 						`<a><b id="789" foo="3">third</b></a>`,
 				},
 				{
-					nsFlag: xmlpicker.NSPrefix,
-					expected: `` +
-						`<a><b id="123" a:foo="1">first</b></a>` +
-						`<a><b id="456" b:foo="2" xmlns:b="http://example.com/x">second</b></a>` +
-						`<a><b id="789" c:foo="3">third</b></a>`,
+					nsFlag:      xmlpicker.NSPrefix,
+					expectedErr: "xmlpicker: undeclared prefix a at /a/b",
 				},
 			},
 		},
