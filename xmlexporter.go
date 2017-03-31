@@ -13,22 +13,15 @@ type XMLExporter struct {
 }
 
 func (e *XMLExporter) EncodeNode(node *Node) error {
-	e.hasNS = false
-	if err := e.startPath(node); err != nil {
-		return err
-	}
 	if text, ok := node.Text(); ok {
-		if err := e.encodeText(text); err != nil {
+		return e.encodeText(text)
+	}
+	for _, child := range node.Children {
+		if err := e.encodeNode(child); err != nil {
 			return err
 		}
-	} else {
-		for _, child := range node.Children {
-			if err := e.encodeNode(child); err != nil {
-				return err
-			}
-		}
 	}
-	return e.endPath(node)
+	return nil
 }
 
 func (e *XMLExporter) encodeNode(n *Node) error {
@@ -43,30 +36,28 @@ func (e *XMLExporter) encodeNode(n *Node) error {
 			return err
 		}
 	}
-	if err := e.encodeEndElement(n); err != nil {
-		return err
-	}
-	return nil
+	return e.encodeEndElement(n)
 }
 
-func (e *XMLExporter) startPath(node *Node) error {
+func (e *XMLExporter) StartPath(node *Node) error {
+	e.hasNS = false
 	if node.Parent == nil {
 		return nil
 	}
-	if err := e.startPath(node.Parent); err != nil {
+	if err := e.StartPath(node.Parent); err != nil {
 		return err
 	}
 	return e.encodeStartElement(node)
 }
 
-func (e *XMLExporter) endPath(node *Node) error {
+func (e *XMLExporter) EndPath(node *Node) error {
 	if node.Parent == nil {
 		return nil
 	}
 	if err := e.encodeEndElement(node); err != nil {
 		return err
 	}
-	return e.endPath(node.Parent)
+	return e.EndPath(node.Parent)
 }
 
 func (e *XMLExporter) encodeStartElement(node *Node) error {
@@ -109,7 +100,10 @@ func (e *XMLExporter) fixAttributes(node *Node) ([]xml.Attr, error) {
 	}
 	if len(node.Namespaces) != 0 {
 		ks := make([]string, 0, len(node.Namespaces))
-		for k := range node.Namespaces {
+		for k, v := range node.Namespaces {
+			if prev, ok := node.Parent.LookupPrefix(k); ok && prev == v {
+				continue // prefix:ns combination already in place
+			}
 			ks = append(ks, k)
 		}
 		sort.Strings(ks)

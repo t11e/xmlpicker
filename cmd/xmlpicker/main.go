@@ -109,6 +109,9 @@ func main() {
 }
 
 func mainImpl(o *options, fs []string, proc processor) error {
+	if err := proc.Begin(); err != nil {
+		return err
+	}
 	for _, f := range fs {
 		if err := parse(f, o, proc); err != nil {
 			return err
@@ -145,11 +148,13 @@ func parse(filename string, o *options, proc processor) error {
 		if err := proc.Process(n); err != nil {
 			return err
 		}
+		n.Parent = nil // ensure parser doesn't care if we overwrite this value
 	}
 	return nil
 }
 
 type processor interface {
+	Begin() error
 	Process(node *xmlpicker.Node) error
 	Finish() error
 }
@@ -166,6 +171,10 @@ func newJSONProcessor(w io.Writer) *jsonProcessor {
 type jsonProcessor struct {
 	encoder *json.Encoder
 	mapper  xmlpicker.Mapper
+}
+
+func (p *jsonProcessor) Begin() error {
+	return nil
 }
 
 func (p *jsonProcessor) Process(node *xmlpicker.Node) error {
@@ -193,29 +202,47 @@ type xmlProcessor struct {
 	containerNode *xmlpicker.Node
 }
 
-func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
-	var prevContainer *xmlpicker.Node
+func (p *xmlProcessor) Begin() error {
 	if p.containerNode != nil {
-		prevContainer = node.Parent
+		if err := p.exporter.StartPath(p.containerNode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
+	if p.containerNode == nil {
+		if err := p.exporter.StartPath(node); err != nil {
+			return err
+		}
+	} else {
 		node.Parent = p.containerNode
-		defer func() {
-			node.Parent = prevContainer
-		}()
 	}
 	if err := p.exporter.EncodeNode(node); err != nil {
 		return err
 	}
-	// must flush here to allow us to send the newline directly to the writer afterward
-	if err := p.exporter.Encoder.Flush(); err != nil {
-		return err
-	}
-	if _, err := p.writer.Write([]byte{'\n'}); err != nil {
-		return err
+	if p.containerNode == nil {
+		if err := p.exporter.EndPath(node); err != nil {
+			return err
+		}
+		// must flush here to allow us to send the newline directly to the writer afterward
+		if err := p.exporter.Encoder.Flush(); err != nil {
+			return err
+		}
+		if _, err := p.writer.Write([]byte{'\n'}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (p *xmlProcessor) Finish() error {
+	if p.containerNode != nil {
+		if err := p.exporter.EndPath(p.containerNode); err != nil {
+			return err
+		}
+	}
 	return p.exporter.Encoder.Flush()
 }
 
