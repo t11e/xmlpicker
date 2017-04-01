@@ -16,27 +16,15 @@ func (e *XMLExporter) EncodeNode(node *Node) error {
 	if text, ok := node.Text(); ok {
 		return e.encodeText(text)
 	}
-	for _, child := range node.Children {
-		if err := e.encodeNode(child); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (e *XMLExporter) encodeNode(n *Node) error {
-	if text, ok := n.Text(); ok {
-		return e.encodeText(text)
-	}
-	if err := e.encodeStartElement(n); err != nil {
+	if err := e.encodeStartElement(node); err != nil {
 		return err
 	}
-	for _, child := range n.Children {
-		if err := e.encodeNode(child); err != nil {
+	for _, child := range node.Children {
+		if err := e.EncodeNode(child); err != nil {
 			return err
 		}
 	}
-	return e.encodeEndElement(n)
+	return e.encodeEndElement(node)
 }
 
 func (e *XMLExporter) StartPath(node *Node) error {

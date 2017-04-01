@@ -96,7 +96,7 @@ func TestXMLExporter(t *testing.T) {
 							actualErr = err
 							break
 						}
-						if err := e.StartPath(n); err != nil {
+						if err := e.StartPath(n.Parent); err != nil {
 							actualErr = err
 							break
 						}
@@ -104,7 +104,7 @@ func TestXMLExporter(t *testing.T) {
 							actualErr = err
 							break
 						}
-						if err := e.EndPath(n); err != nil {
+						if err := e.EndPath(n.Parent); err != nil {
 							actualErr = err
 							break
 						}
@@ -548,7 +548,7 @@ func TestXMLExporter_Namespaces(t *testing.T) {
 							actualErr = err
 							break
 						}
-						if err := e.StartPath(n); err != nil {
+						if err := e.StartPath(n.Parent); err != nil {
 							actualErr = err
 							break
 						}
@@ -556,7 +556,7 @@ func TestXMLExporter_Namespaces(t *testing.T) {
 							actualErr = err
 							break
 						}
-						if err := e.EndPath(n); err != nil {
+						if err := e.EndPath(n.Parent); err != nil {
 							actualErr = err
 							break
 						}

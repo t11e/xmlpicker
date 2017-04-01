@@ -213,7 +213,7 @@ func (p *xmlProcessor) Begin() error {
 
 func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
 	if p.containerNode == nil {
-		if err := p.exporter.StartPath(node); err != nil {
+		if err := p.exporter.StartPath(node.Parent); err != nil {
 			return err
 		}
 	} else {
@@ -223,7 +223,7 @@ func (p *xmlProcessor) Process(node *xmlpicker.Node) error {
 		return err
 	}
 	if p.containerNode == nil {
-		if err := p.exporter.EndPath(node); err != nil {
+		if err := p.exporter.EndPath(node.Parent); err != nil {
 			return err
 		}
 		// must flush here to allow us to send the newline directly to the writer afterward
