@@ -161,3 +161,7 @@ To install the commands into `$GOPATH/bin/`:
 ```sh
 go install ./cmd/...
 ```
+
+# License
+
+MIT. See [LICENSE](LICENSE) file.
