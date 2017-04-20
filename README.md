@@ -1,4 +1,5 @@
-# xmlpicker
+# xmlpicker [![GoDoc](https://godoc.org/github.com/t11e/xmlpicker?status.svg)](http://godoc.org/github.com/t11e/xmlpicker) [![Report card](https://goreportcard.com/badge/github.com/t11e/xmlpicker)](https://goreportcard.com/report/github.com/t11e/xmlpicker)
+
 
 Wraps an `xml.Decoder` to support picking out smaller chunks from very large XML files
 where each indidual chunk can be held in memory for processing.
