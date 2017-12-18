@@ -142,13 +142,13 @@ the `--namespace=` option. Possible values are:
 
 # Contributions
 
-Clone this repository into your GOPATH and use [Glide](https://github.com/Masterminds/glide) to install its dependencies.
+Clone this repository into your GOPATH and use [dep](https://github.com/golang/dep) to install its dependencies.
 
 ```sh
-brew install glide
+brew install dep
 go get github.com/t11e/xmlpicker
 cd "$GOPATH"/src/github.com/t11e/xmlpicker
-glide install --strip-vendor
+dep ensure
 ```
 
 You can then run the tests:
